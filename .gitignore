@@ -1,0 +1,7 @@
+# Python cache
+__pycache__/
+
+# Datasets, logs, and local scripts
+edu_fineweb10B/
+hellaswag/
+git_chore.sh
