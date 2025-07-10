@@ -49,6 +49,80 @@ For more production-grade runs that are very similar to nanoGPT, I recommend loo
 - [litGPT](https://github.com/Lightning-AI/litgpt)
 - [TinyLlama](https://github.com/jzhang38/TinyLlama)
 
+## 使用训练好的模型
+
+### 加载 Checkpoint
+
+训练过程中会自动保存 checkpoint 文件到 `log/` 目录，包含：
+- 模型权重 (`model`)
+- 优化器状态 (`optimizer`)
+- 模型配置 (`config`)
+- 训练步数和损失值
+- 随机状态（用于恢复训练）
+
+### 推理使用
+
+1. **单次推理**
+```bash
+python inference.py
+```
+
+可以修改 `inference.py` 中的参数：
+- `checkpoint_path`: checkpoint 文件路径
+- `prompt`: 输入提示词
+- `max_length`: 生成文本的最大长度
+- `temperature`: 控制生成随机性（0.1-1.0）
+- `top_k`: Top-K 采样参数
+
+2. **继续训练**
+```bash
+# 从最新的 checkpoint 继续训练
+python train_gpt2.py --auto_resume
+
+# 从指定的 checkpoint 继续训练
+python train_gpt2.py --resume --checkpoint_path log/model_10000.pt
+```
+
+### 模型部署
+
+1. **Web API 服务**
+
+安装依赖：
+```bash
+pip install flask
+```
+
+启动服务：
+```bash
+# 使用默认配置
+python serve.py
+
+# 指定端口和 checkpoint
+PORT=8080 MODEL_CHECKPOINT=log/model_40000.pt python serve.py
+```
+
+API 调用示例：
+```bash
+# 生成文本
+curl -X POST http://localhost:5000/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "The future of AI is",
+    "max_length": 100,
+    "temperature": 0.8,
+    "top_k": 50
+  }'
+
+# 健康检查
+curl http://localhost:5000/health
+```
+
+2. **生产环境部署建议**
+- 使用 Gunicorn 或 uWSGI 作为 WSGI 服务器
+- 添加请求限流和认证
+- 使用 Docker 容器化部署
+- 配置 GPU 资源调度
+
 ## FAQ
 
 ## License

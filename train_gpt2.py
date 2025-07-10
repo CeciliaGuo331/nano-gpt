@@ -475,7 +475,7 @@ def clean_old_checkpoints(log_dir, keep_n):
     checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
     checkpoints.sort(key=os.path.getctime)
     
-    if len(checkpoints) > keep_n:
+    if keep_n != -1 and len(checkpoints) > keep_n:
         for checkpoint in checkpoints[:-keep_n]:
             os.remove(checkpoint)
             if master_process:
