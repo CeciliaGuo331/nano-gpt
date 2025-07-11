@@ -399,6 +399,24 @@ parser.add_argument(
     default=-1,
     help="Keep only the last N checkpoints, -1 to keep all",
 )
+parser.add_argument(
+    "--eval_interval",
+    type=int,
+    default=250,
+    help="Evaluate validation loss every N steps",
+)
+parser.add_argument(
+    "--hellaswag_interval",
+    type=int,
+    default=250,
+    help="Evaluate HellaSwag every N steps",
+)
+parser.add_argument(
+    "--generate_interval",
+    type=int,
+    default=250,
+    help="Generate text samples every N steps",
+)
 args = parser.parse_args()
 
 # run the training loop
@@ -718,7 +736,7 @@ for step in range(start_step, max_steps):
     last_step = step == max_steps - 1
 
     # once in a while evaluate our validation loss
-    if step % 250 == 0 or last_step:
+    if step % args.eval_interval == 0 or last_step:
         model.eval()
         val_loader.reset()
         with torch.no_grad():
@@ -737,25 +755,28 @@ for step in range(start_step, max_steps):
             print(f"validation loss: {val_loss_accum.item():.4f}")
             with open(log_file, "a") as f:
                 f.write(f"{step} val {val_loss_accum.item():.4f}\n")
-            if step > 0 and (step % args.checkpoint_interval == 0 or last_step):
-                # optionally write model checkpoints
-                checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
-                try:
-                    save_checkpoint(
-                        step,
-                        raw_model,
-                        optimizer,
-                        train_loader,
-                        val_loss_accum.item(),
-                        checkpoint_path,
-                    )
-                except Exception as e:
-                    if master_process:
-                        print(f"Warning: Failed to save checkpoint at step {step}: {e}")
-                        print("Training will continue, but checkpoint was not saved.")
+    
+    # checkpoint saving logic (moved outside validation block)
+    if master_process and step > 0 and (step % args.checkpoint_interval == 0 or last_step):
+        # optionally write model checkpoints
+        checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+        # Use the last validation loss if available, otherwise use current training loss
+        val_loss_to_save = val_loss_accum.item() if 'val_loss_accum' in locals() else loss_accum.item()
+        try:
+            save_checkpoint(
+                step,
+                raw_model,
+                optimizer,
+                train_loader,
+                val_loss_to_save,
+                checkpoint_path,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to save checkpoint at step {step}: {e}")
+            print("Training will continue, but checkpoint was not saved.")
 
     # once in a while evaluate hellaswag
-    if (step % 250 == 0 or last_step) and (not use_compile):
+    if (step % args.hellaswag_interval == 0 or last_step) and (not use_compile):
         num_correct_norm = 0
         num_total = 0
         for i, example in enumerate(iterate_examples("val")):
@@ -790,7 +811,7 @@ for step in range(start_step, max_steps):
                 f.write(f"{step} hella {acc_norm:.4f}\n")
 
     # once in a while generate from the model (except step 0, which is noise)
-    if ((step > 0 and step % 250 == 0) or last_step) and (not use_compile):
+    if ((step > 0 and step % args.generate_interval == 0) or last_step) and (not use_compile):
         model.eval()
         num_return_sequences = 4
         max_length = 32
