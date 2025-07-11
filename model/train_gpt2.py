@@ -561,6 +561,17 @@ def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_p
     temp_path = checkpoint_path + ".tmp"
 
     try:
+        # 确保 RNG 状态是正确的格式
+        rng_state = torch.get_rng_state()
+        if rng_state.dtype != torch.uint8:
+            rng_state = rng_state.to(torch.uint8)
+        
+        cuda_rng_state = None
+        if torch.cuda.is_available():
+            cuda_rng_state = torch.cuda.get_rng_state()
+            if cuda_rng_state.dtype != torch.uint8:
+                cuda_rng_state = cuda_rng_state.to(torch.uint8)
+        
         checkpoint = {
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
@@ -568,10 +579,8 @@ def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_p
             "step": step,
             "val_loss": val_loss,
             "train_loader_state": train_loader.get_state(),
-            "rng_state": torch.get_rng_state(),
-            "cuda_rng_state": (
-                torch.cuda.get_rng_state() if torch.cuda.is_available() else None
-            ),
+            "rng_state": rng_state,
+            "cuda_rng_state": cuda_rng_state,
             "numpy_rng_state": np.random.get_state(),
             "python_rng_state": random.getstate(),
         }
