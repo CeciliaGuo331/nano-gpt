@@ -598,7 +598,8 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
         raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        # PyTorch 2.6+ 需要设置 weights_only=False 来加载包含 Python 对象的 checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     except Exception as e:
         raise RuntimeError(f"Failed to load checkpoint {checkpoint_path}: {e}")
 
@@ -620,10 +621,19 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
     optimizer.load_state_dict(checkpoint["optimizer"])
     train_loader.load_state(checkpoint["train_loader_state"])
 
-    # Restore random states
-    torch.set_rng_state(checkpoint["rng_state"])
+    # Restore random states - 处理不同 PyTorch 版本的兼容性
+    rng_state = checkpoint["rng_state"]
+    if isinstance(rng_state, torch.Tensor) and rng_state.dtype != torch.uint8:
+        # 转换为 ByteTensor (uint8)
+        rng_state = rng_state.to(torch.uint8)
+    torch.set_rng_state(rng_state)
+    
     if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
-        torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
+        cuda_rng_state = checkpoint["cuda_rng_state"]
+        if isinstance(cuda_rng_state, torch.Tensor) and cuda_rng_state.dtype != torch.uint8:
+            cuda_rng_state = cuda_rng_state.to(torch.uint8)
+        torch.cuda.set_rng_state(cuda_rng_state)
+    
     np.random.set_state(checkpoint["numpy_rng_state"])
     random.setstate(checkpoint["python_rng_state"])
 
