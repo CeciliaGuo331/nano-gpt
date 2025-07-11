@@ -650,15 +650,22 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
 
     # Restore random states - 处理不同 PyTorch 版本的兼容性
     rng_state = checkpoint["rng_state"]
-    if isinstance(rng_state, torch.Tensor) and rng_state.dtype != torch.uint8:
-        # 转换为 ByteTensor (uint8)
-        rng_state = rng_state.to(torch.uint8)
+    # torch.set_rng_state 需要 ByteTensor，不是普通的 uint8 tensor
+    if not isinstance(rng_state, torch.ByteTensor):
+        # 转换为 ByteTensor
+        if isinstance(rng_state, torch.Tensor):
+            rng_state = rng_state.byte()  # 这会返回 ByteTensor
+        else:
+            rng_state = torch.ByteTensor(rng_state)
     torch.set_rng_state(rng_state)
     
     if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
         cuda_rng_state = checkpoint["cuda_rng_state"]
-        if isinstance(cuda_rng_state, torch.Tensor) and cuda_rng_state.dtype != torch.uint8:
-            cuda_rng_state = cuda_rng_state.to(torch.uint8)
+        if not isinstance(cuda_rng_state, torch.ByteTensor):
+            if isinstance(cuda_rng_state, torch.Tensor):
+                cuda_rng_state = cuda_rng_state.byte()
+            else:
+                cuda_rng_state = torch.ByteTensor(cuda_rng_state)
         torch.cuda.set_rng_state(cuda_rng_state)
     
     np.random.set_state(checkpoint["numpy_rng_state"])
