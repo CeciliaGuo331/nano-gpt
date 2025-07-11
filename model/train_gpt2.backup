@@ -1,3 +1,7 @@
+'''
+gpt-2模型预训练
+'''
+
 import os
 import math
 import time
