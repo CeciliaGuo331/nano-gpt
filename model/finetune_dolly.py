@@ -397,7 +397,7 @@ def main():
         print(f"Logging to {log_dir}")
         
     # 创建模型
-    model = GPT(GPTConfig())
+    model = GPT(GPTConfig(vocab_size=50304))
     model.to(device)
     
     if compile_model:
