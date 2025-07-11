@@ -301,7 +301,7 @@ def main():
     parser.add_argument(
         "--pretrained_checkpoint",
         type=str,
-        default="logs/model_19072.pt",
+        default="log/model_19072.pt",
         help="Path to pretrained model checkpoint",
     )
     parser.add_argument(
