@@ -16,8 +16,8 @@ graph TB
     subgraph "API 服务层"
         B1[serve.py]
         B2[Flask App]
-        B3[/generate 端点<br/>文本生成]
-        B4[/health 端点<br/>健康检查]
+        B3["/generate 端点<br/>文本生成"]
+        B4["/health 端点<br/>健康检查"]
         B5[请求验证与错误处理]
         B1 --> B2
         B2 --> B3
