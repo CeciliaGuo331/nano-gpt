@@ -15,6 +15,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import tiktoken
 import argparse
 import random
+import inspect
 
 # 导入预训练脚本中的模型定义
 import sys
@@ -423,6 +424,20 @@ def main():
         learning_rate=max_lr, 
         device_type=device.split(":")[0]
     )
+    
+    # Print optimizer info if master process
+    if master_process:
+        param_dict = {pn: p for pn, p in raw_model.named_parameters()}
+        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and device.split(":")[0] == "cuda"
+        print(f"using fused AdamW: {use_fused}")
     
     # 学习率调度
     def get_lr(it):
