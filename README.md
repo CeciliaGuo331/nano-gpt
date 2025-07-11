@@ -1,130 +1,124 @@
-# build nanoGPT
+# nano-gpt
 
-This repo holds the from-scratch reproduction of [nanoGPT](https://github.com/karpathy/nanoGPT/tree/master). The git commits were specifically kept step by step and clean so that one can easily walk through the git commit history to see it built slowly. Additionally, there is an accompanying [video lecture on YouTube](https://youtu.be/l8pRSuU81PU) where you can see me introduce each commit and explain the pieces along the way.
+本仓库在 Andrej Karpathy 的 [build-nanogpt](https://github.com/karpathy/build-nanogpt) 项目基础上进行改进与扩展。项目旨在完整复现一个基于GPT-2架构的语言模型，并在此基础上，通过指令微调（Instruction Fine-tuning）技术，使其从一个只会进行语法正确的无意义续写的“基础模型”转变为一个具备初步指令遵循能力的“入门级助手”，最终将其部署为一个可实际交互的Web应用。
 
-We basically start from an empty file and work our way to a reproduction of the [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) (124M) model. If you have more patience or money, the code can also reproduce the [GPT-3](https://arxiv.org/pdf/2005.14165) models. While the GPT-2 (124M) model probably trained for quite some time back in the day (2019, ~5 years ago), today, reproducing it is a matter of ~1hr and ~$10. You'll need a cloud GPU box if you don't have enough, for that I recommend [Lambda](https://lambdalabs.com).
+## ✨ 项目亮点
 
-Note that GPT-2 and GPT-3 and both simple language models, trained on internet documents, and all they do is "dream" internet documents. So this repo/video this does not cover Chat finetuning, and you can't talk to it like you can talk to ChatGPT. The finetuning process (while quite simple conceptually - SFT is just about swapping out the dataset and continuing the training) comes after this part and will be covered at a later time. For now this is the kind of stuff that the 124M model says if you prompt it with "Hello, I'm a language model," after 10B tokens of training:
+* **端到端全流程复现**：涵盖了从数据处理、模型预训练、指令微调、性能评估到最终部署的完整大型语言模型生命周期。
+* **清晰的两阶段训练**：通过预训练和微调的鲜明对比，直观展示了“指令遵循”能力是如何通过微调注入给基础模型的。
+* **健壮的工程实践**：代码中加入了断点续训（Checkpointing）功能的集成，保证了长时间训练的稳定性。
+* **应用驱动**：项目最终成果并非仅停留在模型层面，而是通过**Flask**和Web前端，实现了一个可交互、可视化的原型应用。
 
-```
-Hello, I'm a language model, and my goal is to make English as easy and fun as possible for everyone, and to find out the different grammar rules
-Hello, I'm a language model, so the next time I go, I'll just say, I like this stuff.
-Hello, I'm a language model, and the question is, what should I do if I want to be a teacher?
-Hello, I'm a language model, and I'm an English person. In languages, "speak" is really speaking. Because for most people, there's
-```
+## 🏛️ 模型架构
 
-And after 40B tokens of training:
+`nano-GPT` 项目借鉴了 Andrej Karpathy 对 GPT-2 的经典复现。其核心是一种仅解码器（Decoder-only）的 Transformer 架构。网络由12个解码器模块级联组成，每个模块内部均集成了一个多头自注意力机制（Multi-Head Self-Attention）与一个前馈神经网络（Feed-Forward Network），并通过残差连接和层归一化保证了训练的稳定性。
 
-```
-Hello, I'm a language model, a model of computer science, and it's a way (in mathematics) to program computer programs to do things like write
-Hello, I'm a language model, not a human. This means that I believe in my language model, as I have no experience with it yet.
-Hello, I'm a language model, but I'm talking about data. You've got to create an array of data: you've got to create that.
-Hello, I'm a language model, and all of this is about modeling and learning Python. I'm very good in syntax, however I struggle with Python due
-```
+## 📚 训练流程与数据集
 
-Lol. Anyway, once the video comes out, this will also be a place for FAQ, and a place for fixes and errata, of which I am sure there will be a number :)
+本项目的训练分为两个核心阶段：
 
-For discussions and questions, please use [Discussions tab](https://github.com/karpathy/build-nanogpt/discussions), and for faster communication, have a look at my [Zero To Hero Discord](https://discord.gg/3zy8kqD9Cp), channel **#nanoGPT**:
+1.  **基础预训练 (Pre-training)**
+    * **数据集**: **FineWeb** 数据集（OpenWebText的一个高质量子集）。
+    * **目标**: 在海量的通用英文文本上进行自监督学习（预测下一个词），让模型掌握英语的语法、句法、基本事实知识和文本连贯性，成为一个“通才”。
 
-[![](https://dcbadge.vercel.app/api/server/3zy8kqD9Cp?compact=true&style=flat)](https://discord.gg/3zy8kqD9Cp)
+2.  **指令微调 (Instruction Fine-tuning)**
+    * **数据集**: **Databricks Dolly 15k**，一个由数千名员工手写的、高质量、包含7种任务类型的指令数据集。
+    * **目标**: 在预训练好的模型基础上，使用这个“教材”进行有监督的微调，教会模型如何理解并遵循人类的指令，使其从“通才”转变为“专才”。
 
-## Video
+## 📊 模型能力评估
 
-[Let's reproduce GPT-2 (124M) YouTube lecture](https://youtu.be/l8pRSuU81PU)
+* **定量评估**: 使用 **Hellaswag** 数据集作为常识推理能力的基准测试，对比模型在微调前后的性能变化。
+* **定性评估**: 设计了一系列覆盖不同任务类型（如问答、总结、创意写作）的测试指令，直观展示模型在微调前后回答质量的“脱胎换骨”。
 
-## Errata
+| 任务类型 | 微调前模型 (Base Model) | 微调后模型 (Finetuned Model) |
+| :--- | :--- | :--- |
+| **封闭式问答** | `Q: What is the capital of France? A: What is the capital of Spain? It is...` | `Q: What is the capital of France? A: The capital of France is Paris.` |
+| **创意写作** | `Write a short poem about the moon.` -> *(生成与诗歌无关的零散句子)* | `Write a short poem about the moon.` -> *(生成一段关于月亮的押韵短诗)* |
 
-Minor cleanup, we forgot to delete `register_buffer` of the bias once we switched to flash attention, fixed with a recent PR.
+## 🚀 部署应用
 
-Earlier version of PyTorch may have difficulty converting from uint16 to long. Inside `load_tokens`, we added `npt = npt.astype(np.int32)` to use numpy to convert uint16 to int32 before converting to torch tensor and then converting to long.
+项目通过以下技术栈实现了一个简单的Web应用：
 
-The `torch.autocast` function takes an arg `device_type`, to which I tried to stubbornly just pass `device` hoping it works ok, but PyTorch actually really wants just the type and creates errors in some version of PyTorch. So we want e.g. the device `cuda:3` to get stripped to `cuda`. Currently, device `mps` (Apple Silicon) would become `device_type` CPU, I'm not 100% sure this is the intended PyTorch way.
+* **后端**: 使用 **Flask** 框架将微调好的PyTorch模型封装成一个高效的HTTP API接口。
+* **前端**: 使用原生 **HTML, CSS, 和 JavaScript** 构建一个简洁的用户界面，用户可以在网页上输入指令，并实时获取模型的生成结果。
 
-Confusingly, `model.require_backward_grad_sync` is actually used by both the forward and backward pass. Moved up the line so that it also gets applied to the forward pass. 
+## 快速开始
 
-## Prod
+### 1. 环境设置
 
-For more production-grade runs that are very similar to nanoGPT, I recommend looking at the following repos:
-
-- [litGPT](https://github.com/Lightning-AI/litgpt)
-- [TinyLlama](https://github.com/jzhang38/TinyLlama)
-
-## 使用训练好的模型
-
-### 加载 Checkpoint
-
-训练过程中会自动保存 checkpoint 文件到 `log/` 目录，包含：
-- 模型权重 (`model`)
-- 优化器状态 (`optimizer`)
-- 模型配置 (`config`)
-- 训练步数和损失值
-- 随机状态（用于恢复训练）
-
-### 推理使用
-
-1. **单次推理**
 ```bash
-python inference.py
+# 克隆本仓库
+git clone [你的仓库URL]
+cd [你的仓库目录]
+
+# 安装依赖
+pip install -r requirements.txt
 ```
 
-可以修改 `inference.py` 中的参数：
-- `checkpoint_path`: checkpoint 文件路径
-- `prompt`: 输入提示词
-- `max_length`: 生成文本的最大长度
-- `temperature`: 控制生成随机性（0.1-1.0）
-- `top_k`: Top-K 采样参数
+*(注: `requirements.txt` 应包含 `torch`, `numpy`, `flask`, `transformers`, `datasets` 等)*
 
-2. **继续训练**
+### 2\. 数据准备
+
 ```bash
-# 从最新的 checkpoint 继续训练
-python train_gpt2.py --auto_resume
+# 运行脚本下载并预处理FineWeb数据集用于预训练
+python data/prepare_fineweb.py
 
-# 从指定的 checkpoint 继续训练
-python train_gpt2.py --resume --checkpoint_path log/model_10000.pt
+# 运行脚本下载并格式化Dolly-15k数据集用于微调
+python data/prepare_dolly.py
 ```
 
-### 模型部署
+### 3\. 模型训练与微调
 
-1. **Web API 服务**
-
-安装依赖：
 ```bash
-pip install flask
+# 第一阶段：执行基础预训练
+# (该过程耗时较长，建议在有GPU的服务器上运行)
+python training/train.py --config=configs/pretrain_gpt2.py
+
+# 第二阶段：执行指令微调
+# (确保 --init_from 指向你预训练好的模型检查点)
+python training/finetune.py --config=configs/finetune_dolly.py
 ```
 
-启动服务：
+### 4\. 启动Web应用
+
 ```bash
-# 使用默认配置
-python serve.py
+# 启动Flask后端服务器 (用于开发测试)
+python app.py
 
-# 指定端口和 checkpoint
-PORT=8080 MODEL_CHECKPOINT=log/model_40000.pt python serve.py
+# 在浏览器中打开 frontend/index.html 文件即可开始交互
 ```
 
-API 调用示例：
-```bash
-# 生成文本
-curl -X POST http://localhost:5000/generate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "prompt": "The future of AI is",
-    "max_length": 100,
-    "temperature": 0.8,
-    "top_k": 50
-  }'
+## 📁 项目文件结构
 
-# 健康检查
-curl http://localhost:5000/health
+```
+.
+├── app.py                  # Flask后端服务代码
+├── configs/
+│   ├── pretrain_gpt2.py    # 预训练配置文件
+│   └── finetune_dolly.py   # 微调配置文件
+├── data/
+│   ├── prepare_fineweb.py  # FineWeb数据集处理脚本
+│   └── prepare_dolly.py    # Dolly数据集处理脚本
+├── evaluation/
+│   ├── eval_hellaswag.py   # Hellaswag评估脚本
+│   └── qualitative_tests.py # 定性评估脚本
+├── frontend/
+│   ├── index.html          # 前端页面
+│   └── script.js           # 前端交互逻辑
+├── training/
+│   ├── train.py            # 预训练主脚本
+│   ├── finetune.py         # 微调主脚本
+│   └── model.py            # GPT模型定义
+└── README.md               # 项目说明文档
 ```
 
-2. **生产环境部署建议**
-- 使用 Gunicorn 或 uWSGI 作为 WSGI 服务器
-- 添加请求限流和认证
-- 使用 Docker 容器化部署
-- 配置 GPU 资源调度
+## 展望
 
-## FAQ
+  * **模型扩展**：如算力充足，可尝试更大规模的GPT-2变体（如355M参数版本），探索模型规模对指令遵循能力的影响。
+  * **数据集融合**：混合多种指令数据集（如Alpaca, COIG）进行微调，提升模型的泛化能力。
+  * **评估体系**：引入更多维度的评估基准，对模型的综合能力进行更全面的考察。
 
-## License
+## 致谢
 
-MIT
+  * 本项目深受 [Andrej Karpathy](https://github.com/karpathy) 的 `build-nanogpt` 教程启发。
+  * 微调数据使用了由 [Databricks](https://www.databricks.com/) 贡献的 `dolly-v2-12b` 数据集。

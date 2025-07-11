@@ -19,12 +19,10 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
-        # key, query, value projections for all heads, but in a batch
+        # 批量处理所有注意力头的Q, K, V
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
-        # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         self.c_proj.NANOGPT_SCALE_INIT = 1
-        # regularization
         self.n_head = config.n_head
         self.n_embd = config.n_embd
 
@@ -32,9 +30,9 @@ class CausalSelfAttention(nn.Module):
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        # nh is "number of heads", hs is "head size", and C (number of channels) = nh * hs
-        # e.g. in GPT-2 (124M), n_head=12, hs=64, so nh*hs=C=768 channels in the Transformer
+        # 批量计算所有头的Q, K, V, 并将头维度移到批量维度
+        # nh 是 "头的数量"，hs 是 "头的大小"，C（通道数）= nh * hs
+        # 例如在 GPT-2 (124M) 中，n_head=12，hs=64，所以 nh*hs=C=768 个 Transformer 通道
         qkv = self.c_attn(x)
         q, k, v = qkv.split(self.n_embd, dim=2)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(
@@ -46,11 +44,11 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(
             1, 2
         )  # (B, nh, T, hs)
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash attention
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # flash 注意力
         y = (
             y.transpose(1, 2).contiguous().view(B, T, C)
-        )  # re-assemble all head outputs side by side
-        # output projection
+        )  # 重新组装所有头的输出
+        # 输出投影
         y = self.c_proj(y)
         return y
 
@@ -88,13 +86,13 @@ class Block(nn.Module):
 
 @dataclass
 class GPTConfig:
-    block_size: int = 1024  # max sequence length
+    block_size: int = 1024  # 最大序列长度
     vocab_size: int = (
-        50257  # number of tokens: 50,000 BPE merges + 256 bytes tokens + 1 <|endoftext|> token
+        50257  # 词汇表大小：50,000 个 BPE 合并 + 256 个字节标记 + 1 个 <|endoftext|> 标记
     )
-    n_layer: int = 12  # number of layers
-    n_head: int = 12  # number of heads
-    n_embd: int = 768  # embedding dimension
+    n_layer: int = 12  # 层数
+    n_head: int = 12  # 注意力头数
+    n_embd: int = 768  # 嵌入维度
 
 
 class GPT(nn.Module):
@@ -113,10 +111,10 @@ class GPT(nn.Module):
         )
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-        # weight sharing scheme
+        # 权重共享方案
         self.transformer.wte.weight = self.lm_head.weight
 
-        # init params
+        # 初始化参数
         self.apply(self._init_weights)
 
     def _init_weights(self, module):
@@ -131,20 +129,20 @@ class GPT(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
-        # idx is of shape (B, T)
+        # idx 的形状是 (B, T)
         B, T = idx.size()
         assert (
             T <= self.config.block_size
-        ), f"Cannot forward sequence of length {T}, block size is only {self.config.block_size}"
-        # forward the token and posisition embeddings
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)  # shape (T)
-        pos_emb = self.transformer.wpe(pos)  # position embeddings of shape (T, n_embd)
-        tok_emb = self.transformer.wte(idx)  # token embeddings of shape (B, T, n_embd)
+        ), f"无法前向传播长度为 {T} 的序列，块大小仅为 {self.config.block_size}"
+        # 前向传播词元和位置嵌入
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)  # 形状 (T)
+        pos_emb = self.transformer.wpe(pos)  # 位置嵌入，形状 (T, n_embd)
+        tok_emb = self.transformer.wte(idx)  # 词元嵌入，形状 (B, T, n_embd)
         x = tok_emb + pos_emb
-        # forward the blocks of the transformer
+        # 前向传播 transformer 的块
         for block in self.transformer.h:
             x = block(x)
-        # forward the final layernorm and the classifier
+        # 前向传播最终的层归一化和分类器
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)  # (B, T, vocab_size)
         loss = None
@@ -154,61 +152,61 @@ class GPT(nn.Module):
 
     @classmethod
     def from_pretrained(cls, model_type):
-        """Loads pretrained GPT-2 model weights from huggingface"""
+        """从 huggingface 加载预训练的 GPT-2 模型权重"""
         assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
         from transformers import GPT2LMHeadModel
 
         print("loading weights from pretrained gpt: %s" % model_type)
 
-        # n_layer, n_head and n_embd are determined from model_type
+        # n_layer、n_head 和 n_embd 由 model_type 决定
         config_args = {
-            "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M params
-            "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M params
-            "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M params
-            "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M params
+            "gpt2": dict(n_layer=12, n_head=12, n_embd=768),  # 124M 参数
+            "gpt2-medium": dict(n_layer=24, n_head=16, n_embd=1024),  # 350M 参数
+            "gpt2-large": dict(n_layer=36, n_head=20, n_embd=1280),  # 774M 参数
+            "gpt2-xl": dict(n_layer=48, n_head=25, n_embd=1600),  # 1558M 参数
         }[model_type]
-        config_args["vocab_size"] = 50257  # always 50257 for GPT model checkpoints
-        config_args["block_size"] = 1024  # always 1024 for GPT model checkpoints
-        # create a from-scratch initialized minGPT model
+        config_args["vocab_size"] = 50257  # GPT 模型检查点始终为 50257
+        config_args["block_size"] = 1024  # GPT 模型检查点始终为 1024
+        # 创建一个从头初始化的 minGPT 模型
         config = GPTConfig(**config_args)
         model = GPT(config)
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [
             k for k in sd_keys if not k.endswith(".attn.bias")
-        ]  # discard this mask / buffer, not a param
+        ]  # 丢弃这个掩码/缓冲区，不是参数
 
-        # init a huggingface/transformers model
+        # 初始化一个 huggingface/transformers 模型
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
         sd_hf = model_hf.state_dict()
 
-        # copy while ensuring all of the parameters are aligned and match in names and shapes
+        # 复制时确保所有参数在名称和形状上对齐匹配
         sd_keys_hf = sd_hf.keys()
         sd_keys_hf = [
             k for k in sd_keys_hf if not k.endswith(".attn.masked_bias")
-        ]  # ignore these, just a buffer
+        ]  # 忽略这些，只是缓冲区
         sd_keys_hf = [
             k for k in sd_keys_hf if not k.endswith(".attn.bias")
-        ]  # same, just the mask (buffer)
+        ]  # 同样，只是掩码（缓冲区）
         transposed = [
             "attn.c_attn.weight",
             "attn.c_proj.weight",
             "mlp.c_fc.weight",
             "mlp.c_proj.weight",
         ]
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
-        # this means that we have to transpose these weights when we import them
+        # 基本上 OpenAI 检查点使用 "Conv1D" 模块，但我们只想使用普通的 Linear
+        # 这意味着导入这些权重时我们必须转置它们
         assert len(sd_keys_hf) == len(
             sd_keys
         ), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         for k in sd_keys_hf:
             if any(k.endswith(w) for w in transposed):
-                # special treatment for the Conv1D weights we need to transpose
+                # 对需要转置的 Conv1D 权重进行特殊处理
                 assert sd_hf[k].shape[::-1] == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k].t())
             else:
-                # vanilla copy over the other parameters
+                # 普通复制其他参数
                 assert sd_hf[k].shape == sd[k].shape
                 with torch.no_grad():
                     sd[k].copy_(sd_hf[k])
@@ -216,11 +214,11 @@ class GPT(nn.Module):
         return model
 
     def configure_optimizers(self, weight_decay, learning_rate, device_type):
-        # start with all of the candidate parameters (that require grad)
+        # 从所有候选参数开始（需要梯度的）
         param_dict = {pn: p for pn, p in self.named_parameters()}
         param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
-        # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+        # 创建优化器组。任何 2D 参数都会进行权重衰减，否则不会。
+        # 即矩阵乘法中的所有权重张量 + 嵌入会衰减，所有偏置和层归一化不会。
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
@@ -236,7 +234,7 @@ class GPT(nn.Module):
             print(
                 f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
             )
-        # Create AdamW optimizer and use the fused version if it is available
+        # 创建 AdamW 优化器，如果可用则使用融合版本
         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
         use_fused = fused_available and device_type == "cuda"
         if master_process:
@@ -254,7 +252,7 @@ import numpy as np
 
 def load_tokens(filename):
     npt = np.load(filename)
-    npt = npt.astype(np.int32)  # added after video
+    npt = npt.astype(np.int32)  # 视频后添加
     ptt = torch.tensor(npt, dtype=torch.long)
     return ptt
 
@@ -267,7 +265,7 @@ class DataLoaderLite:
         self.num_processes = num_processes
         assert split in {"train", "val"}
 
-        # get the shard filenames
+        # 获取分片文件名
         data_root = "edu_fineweb10B"
         shards = os.listdir(data_root)
         shards = [s for s in shards if split in s]
@@ -280,7 +278,7 @@ class DataLoaderLite:
         self.reset()
 
     def reset(self):
-        # state, init at shard zero
+        # 状态，从分片零初始化
         self.current_shard = 0
         self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_position = self.B * self.T * self.process_rank
@@ -288,11 +286,11 @@ class DataLoaderLite:
     def next_batch(self):
         B, T = self.B, self.T
         buf = self.tokens[self.current_position : self.current_position + B * T + 1]
-        x = (buf[:-1]).view(B, T)  # inputs
-        y = (buf[1:]).view(B, T)  # targets
-        # advance the position in the tensor
+        x = (buf[:-1]).view(B, T)  # 输入
+        y = (buf[1:]).view(B, T)  # 目标
+        # 在张量中前进位置
         self.current_position += B * T * self.num_processes
-        # if loading the next batch would be out of bounds, advance to next shard
+        # 如果加载下一批次会超出边界，前进到下一个分片
         if self.current_position + (B * T * self.num_processes + 1) > len(self.tokens):
             self.current_shard = (self.current_shard + 1) % len(self.shards)
             self.tokens = load_tokens(self.shards[self.current_shard])
@@ -300,26 +298,26 @@ class DataLoaderLite:
         return x, y
 
     def get_state(self):
-        """Return the current state for checkpointing"""
+        """返回当前状态用于检查点"""
         return {
             'current_shard': self.current_shard,
             'current_position': self.current_position
         }
 
     def load_state(self, state):
-        """Load state from checkpoint"""
+        """从检查点加载状态"""
         self.current_shard = state['current_shard']
         self.current_position = state['current_position']
         self.tokens = load_tokens(self.shards[self.current_shard])
 
 
 # -----------------------------------------------------------------------------
-# helper function for HellaSwag eval
-# takes tokens, mask, and logits, returns the index of the completion with the lowest loss
+# HellaSwag 评估辅助函数
+# 接收tokens, masks, logits，返回损失最低的补全索引
 
 
 def get_most_likely_row(tokens, mask, logits):
-    # evaluate the autoregressive loss at all positions
+    # 评估自回归损失
     shift_logits = (logits[..., :-1, :]).contiguous()
     shift_tokens = (tokens[..., 1:]).contiguous()
     flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1))
@@ -328,24 +326,24 @@ def get_most_likely_row(tokens, mask, logits):
         flat_shift_logits, flat_shift_tokens, reduction="none"
     )
     shift_losses = shift_losses.view(tokens.size(0), -1)
-    # now get the average loss just for the completion region (where mask == 1), in each row
+    # 现在获取每行中仅补全区域（mask == 1）的平均损失
     shift_mask = (
         mask[..., 1:]
-    ).contiguous()  # we must shift mask, so we start at the last prompt token
+    ).contiguous()  # 我们必须移动掩码，从最后一个提示词元开始
     masked_shift_losses = shift_losses * shift_mask
-    # sum and divide by the number of 1s in the mask
+    # 求和并除以掩码中 1 的数量
     sum_loss = masked_shift_losses.sum(dim=1)
     avg_loss = sum_loss / shift_mask.sum(dim=1)
-    # now we have a loss for each of the 4 completions
-    # the one with the lowest loss should be the most likely
+    # 现在我们有了 4 个补全的损失
+    # 损失最低的应该是最可能的
     pred_norm = avg_loss.argmin().item()
     return pred_norm
 
 
 # -----------------------------------------------------------------------------
-# simple launch:
+# 简单启动：
 # python train_gpt2.py
-# DDP launch for e.g. 8 GPUs:
+# DDP 启动，例如 8 个 GPU：
 # torchrun --standalone --nproc_per_node=8 train_gpt2.py
 
 # Parse command line arguments
@@ -357,31 +355,31 @@ parser.add_argument('--checkpoint_interval', type=int, default=5000, help='Save 
 parser.add_argument('--keep_last_n_checkpoints', type=int, default=5, help='Keep only the last N checkpoints')
 args = parser.parse_args()
 
-# run the training loop
+# 运行训练循环
 from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 
-# set up DDP (distributed data parallel).
-# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
-ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
+# 设置 DDP（分布式数据并行）。
+# torchrun 命令设置环境变量 RANK、LOCAL_RANK 和 WORLD_SIZE
+ddp = int(os.environ.get("RANK", -1)) != -1  # 这是 ddp 运行吗？
 if ddp:
-    # use of DDP atm demands CUDA, we set the device appropriately according to rank
-    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+    # DDP 目前需要 CUDA，我们根据 rank 适当设置设备
+    assert torch.cuda.is_available(), "目前我认为 DDP 需要 CUDA"
     init_process_group(backend="nccl")
     ddp_rank = int(os.environ["RANK"])
     ddp_local_rank = int(os.environ["LOCAL_RANK"])
     ddp_world_size = int(os.environ["WORLD_SIZE"])
     device = f"cuda:{ddp_local_rank}"
     torch.cuda.set_device(device)
-    master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
+    master_process = ddp_rank == 0  # 这个进程将进行日志记录、检查点等
 else:
-    # vanilla, non-DDP run
+    # 普通的非 DDP 运行
     ddp_rank = 0
     ddp_local_rank = 0
     ddp_world_size = 1
     master_process = True
-    # attempt to autodetect device
+    # 尝试自动检测设备
     device = "cpu"
     if torch.cuda.is_available():
         device = "cuda"
@@ -389,7 +387,7 @@ else:
         device = "mps"
     print(f"using device: {device}")
 
-# added after video, pytorch can be serious about it's device vs. device_type distinction
+# 视频后添加，pytorch 对设备与设备类型的区别很严格
 device_type = "cuda" if device.startswith("cuda") else "cpu"
 
 torch.manual_seed(1337)
@@ -398,12 +396,12 @@ if torch.cuda.is_available():
 
 enc = tiktoken.get_encoding("gpt2")
 
-total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
-B = 16  # micro batch size
-T = 1024  # sequence length
+total_batch_size = 524288  # 2**19，约 0.5M，词元数量
+B = 16  # 微批量大小
+T = 1024  # 序列长度
 assert (
     total_batch_size % (B * T * ddp_world_size) == 0
-), "make sure total_batch_size is divisible by B * T * ddp_world_size"
+), "确保 total_batch_size 可被 B * T * ddp_world_size 整除"
 grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
 if master_process:
     print(f"total desired batch size: {total_batch_size}")
@@ -418,60 +416,60 @@ val_loader = DataLoaderLite(
 
 torch.set_float32_matmul_precision("high")
 
-# create model
+# 创建模型
 model = GPT(GPTConfig(vocab_size=50304))
-# model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
+# model = GPT.from_pretrained("gpt2") # 或从 OpenAI GPT-2 初始化
 model.to(device)
 use_compile = (
-    False  # torch.compile interferes with HellaSwag eval and Generation. TODO fix
+    False  # torch.compile 会干扰 HellaSwag 评估和生成。TODO 修复
 )
 if use_compile:
     model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[ddp_local_rank])
-raw_model = model.module if ddp else model  # always contains the "raw" unwrapped model
+raw_model = model.module if ddp else model  # 始终包含 "原始" 未包装的模型
 
 max_lr = 6e-4
 min_lr = max_lr * 0.1
 warmup_steps = 715
 max_steps = (
-    19073  # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+    19073  # 19,073 步约为 1 轮，如果数据是 10B 词元，批量大小为 0.5M 词元
 )
 
 
 def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
+    # 1) warmup_iters 步的线性预热
     if it < warmup_steps:
         return max_lr * (it + 1) / warmup_steps
-    # 2) if it > lr_decay_iters, return min learning rate
+    # 2) 如果 it > lr_decay_iters，返回最小学习率
     if it > max_steps:
         return min_lr
-    # 3) in between, use cosine decay down to min learning rate
+    # 3) 在两者之间，使用余弦衰减到最小学习率
     decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
     assert 0 <= decay_ratio <= 1
     coeff = 0.5 * (
         1.0 + math.cos(math.pi * decay_ratio)
-    )  # coeff starts at 1 and goes to 0
+    )  # coeff 从 1 开始到 0
     return min_lr + coeff * (max_lr - min_lr)
 
 
-# optimize!
+# 优化！
 optimizer = raw_model.configure_optimizers(
     weight_decay=0.1, learning_rate=6e-4, device_type=device_type
 )
 
-# create the log directory we will write checkpoints to and log to
+# 创建用于写入检查点和日志的日志目录
 log_dir = "log"
 os.makedirs(log_dir, exist_ok=True)
 log_file = os.path.join(log_dir, f"log.txt")
-# Only clear log file if starting fresh, not resuming
+# 仅在全新开始时清除日志文件，恢复时不清除
 if not (args.resume or args.auto_resume):
-    with open(log_file, "w") as f:  # open for writing to clear the file
+    with open(log_file, "w") as f:  # 以写入模式打开以清除文件
         pass
 
-# checkpoint loading functionality
+# 检查点加载功能
 def clean_old_checkpoints(log_dir, keep_n):
-    """Keep only the last N checkpoints"""
+    """仅保留最后 N 个检查点"""
     checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
     checkpoints.sort(key=os.path.getctime)
     
@@ -482,7 +480,7 @@ def clean_old_checkpoints(log_dir, keep_n):
                 print(f"Removed old checkpoint: {checkpoint}")
 
 def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path):
-    """Save a checkpoint with all necessary state"""
+    """保存包含所有必要状态的检查点"""
     checkpoint = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -496,7 +494,7 @@ def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_p
         "python_rng_state": random.getstate(),
     }
     torch.save(checkpoint, checkpoint_path)
-    # save a symlink to the latest checkpoint
+    # 保存指向最新检查点的符号链接
     latest_path = os.path.join(log_dir, "latest_checkpoint.pt")
     if os.path.exists(latest_path):
         os.remove(latest_path)
@@ -504,49 +502,49 @@ def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_p
     if master_process:
         print(f"Saved checkpoint to {checkpoint_path}")
     
-    # Clean old checkpoints
+    # 清理旧检查点
     if args.keep_last_n_checkpoints > 0:
         clean_old_checkpoints(log_dir, args.keep_last_n_checkpoints)
 
 def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
-    """Load a checkpoint and restore all state"""
+    """加载检查点并恢复所有状态"""
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint["model"])
     optimizer.load_state_dict(checkpoint["optimizer"])
     train_loader.load_state(checkpoint["train_loader_state"])
     
-    # Restore random states
+    # 恢复随机状态
     torch.set_rng_state(checkpoint["rng_state"])
     if torch.cuda.is_available() and checkpoint["cuda_rng_state"] is not None:
         torch.cuda.set_rng_state(checkpoint["cuda_rng_state"])
     np.random.set_state(checkpoint["numpy_rng_state"])
     random.setstate(checkpoint["python_rng_state"])
     
-    start_step = checkpoint["step"] + 1  # Resume from next step
+    start_step = checkpoint["step"] + 1  # 从下一步恢复
     if master_process:
         print(f"Resumed from checkpoint at step {checkpoint['step']}")
     return start_step
 
-# Determine the starting step
+# 确定起始步骤
 start_step = 0
 if args.resume or args.auto_resume:
     checkpoint_path = args.checkpoint_path
     if args.auto_resume and checkpoint_path is None:
-        # Find the latest checkpoint
+        # 查找最新的检查点
         checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
         if checkpoints:
             checkpoint_path = max(checkpoints, key=os.path.getctime)
             if master_process:
                 print(f"Auto-resuming from latest checkpoint: {checkpoint_path}")
     
-    # In DDP, ensure all processes use the same checkpoint
+    # 在 DDP 中，确保所有进程使用相同的检查点
     if ddp:
         checkpoint_path_tensor = torch.zeros(1, dtype=torch.int64, device=device)
         if master_process and checkpoint_path:
             checkpoint_path_tensor[0] = 1
         dist.broadcast(checkpoint_path_tensor, 0)
         if checkpoint_path_tensor[0] == 1 and not master_process:
-            # Non-master processes wait for master to determine checkpoint
+            # 非主进程等待主进程确定检查点
             checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
             if checkpoints:
                 checkpoint_path = max(checkpoints, key=os.path.getctime)
@@ -647,47 +645,47 @@ for step in range(start_step, max_steps):
                 # select a token from the top-k probabilities
                 # note: multinomial does not demand the input to sum to 1
                 ix = torch.multinomial(topk_probs, 1, generator=sample_rng)  # (B, 1)
-                # gather the corresponding indices
+                # 收集相应的索引
                 xcol = torch.gather(topk_indices, -1, ix)  # (B, 1)
-                # append to the sequence
+                # 追加到序列
                 xgen = torch.cat((xgen, xcol), dim=1)
-        # print the generated text
+        # 打印生成的文本
         for i in range(num_return_sequences):
             tokens = xgen[i, :max_length].tolist()
             decoded = enc.decode(tokens)
             print(f"rank {ddp_rank} sample {i}: {decoded}")
 
-    # do one step of the optimization
+    # 执行一步优化
     model.train()
     optimizer.zero_grad()
     loss_accum = 0.0
     for micro_step in range(grad_accum_steps):
         x, y = train_loader.next_batch()
         x, y = x.to(device), y.to(device)
-        # added after video, this field is also used by the forward pass.
+        # 视频后添加，这个字段也被前向传播使用。
         if ddp:
             model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
         with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = model(x, y)
-        # we have to scale the loss to account for gradient accumulation,
-        # because the gradients just add on each successive backward().
-        # addition of gradients corresponds to a SUM in the objective, but
-        # instead of a SUM we want MEAN. Scale the loss here so it comes out right
+        # 我们必须缩放损失以考虑梯度累积，
+        # 因为梯度在每次连续的 backward() 中只是相加。
+        # 梯度的相加对应于目标函数中的 SUM，但是
+        # 我们想要的是 MEAN 而不是 SUM。在这里缩放损失使其正确
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
         loss.backward()
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    # determine and set the learning rate for this iteration
+    # 确定并设置本次迭代的学习率
     lr = get_lr(step)
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
     optimizer.step()
     if device_type == "cuda":
-        torch.cuda.synchronize()  # wait for the GPU to finish work
+        torch.cuda.synchronize()  # 等待 GPU 完成工作
     t1 = time.time()
-    dt = t1 - t0  # time difference in seconds
+    dt = t1 - t0  # 时间差（秒）
     tokens_processed = (
         train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
     )
