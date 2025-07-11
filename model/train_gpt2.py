@@ -650,23 +650,47 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
 
     # Restore random states - 处理不同 PyTorch 版本的兼容性
     rng_state = checkpoint["rng_state"]
-    # torch.set_rng_state 需要 ByteTensor，不是普通的 uint8 tensor
-    if not isinstance(rng_state, torch.ByteTensor):
-        # 转换为 ByteTensor
-        if isinstance(rng_state, torch.Tensor):
-            rng_state = rng_state.byte()  # 这会返回 ByteTensor
-        else:
-            rng_state = torch.ByteTensor(rng_state)
-    torch.set_rng_state(rng_state)
+    print(f"Debug: rng_state type = {type(rng_state)}, dtype = {rng_state.dtype if hasattr(rng_state, 'dtype') else 'N/A'}")
+    print(f"Debug: is ByteTensor? {isinstance(rng_state, torch.ByteTensor)}")
+    
+    # 尝试多种转换方法
+    try:
+        torch.set_rng_state(rng_state)
+    except TypeError as e:
+        print(f"Debug: Direct set failed: {e}")
+        # 方法1: 使用 byte()
+        try:
+            if hasattr(rng_state, 'byte'):
+                rng_state_byte = rng_state.byte()
+                print(f"Debug: After byte() - type = {type(rng_state_byte)}")
+                torch.set_rng_state(rng_state_byte)
+                print("Debug: byte() method worked!")
+            else:
+                raise AttributeError("No byte() method")
+        except Exception as e2:
+            print(f"Debug: byte() failed: {e2}")
+            # 方法2: 创建新的 ByteTensor
+            try:
+                if isinstance(rng_state, torch.Tensor):
+                    # 获取数据并创建 ByteTensor
+                    data = rng_state.cpu().numpy() if rng_state.is_cuda else rng_state.numpy()
+                    rng_state_new = torch.ByteTensor(data)
+                    print(f"Debug: Created new ByteTensor - type = {type(rng_state_new)}")
+                    torch.set_rng_state(rng_state_new)
+                    print("Debug: ByteTensor creation worked!")
+                else:
+                    raise ValueError("Not a tensor")
+            except Exception as e3:
+                print(f"Debug: ByteTensor creation failed: {e3}")
+                # 最后的尝试：跳过 RNG 恢复
+                print("Warning: Skipping torch RNG state restoration")
     
     if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
         cuda_rng_state = checkpoint["cuda_rng_state"]
-        if not isinstance(cuda_rng_state, torch.ByteTensor):
-            if isinstance(cuda_rng_state, torch.Tensor):
-                cuda_rng_state = cuda_rng_state.byte()
-            else:
-                cuda_rng_state = torch.ByteTensor(cuda_rng_state)
-        torch.cuda.set_rng_state(cuda_rng_state)
+        try:
+            torch.cuda.set_rng_state(cuda_rng_state)
+        except Exception as e:
+            print(f"Warning: Could not restore CUDA RNG state: {e}")
     
     np.random.set_state(checkpoint["numpy_rng_state"])
     random.setstate(checkpoint["python_rng_state"])
