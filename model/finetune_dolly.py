@@ -22,129 +22,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from train_gpt2 import GPT, GPTConfig
 
 # -----------------------------------------------------------------------------
-# 参数解析
-parser = argparse.ArgumentParser(description="Fine-tune GPT-2 on Dolly-15k dataset")
-parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
-parser.add_argument(
-    "--checkpoint_path",
-    type=str,
-    default=None,
-    help="Path to checkpoint to resume from",
-)
-parser.add_argument(
-    "--auto_resume",
-    action="store_true",
-    help="Automatically resume from latest checkpoint",
-)
-parser.add_argument(
-    "--checkpoint_interval",
-    type=int,
-    default=2,
-    help="Save checkpoint every N steps",
-)
-parser.add_argument(
-    "--keep_last_n_checkpoints",
-    type=int,
-    default=3,
-    help="Keep only the last N checkpoints, -1 to keep all",
-)
-parser.add_argument(
-    "--eval_interval",
-    type=int,
-    default=2,
-    help="Evaluate validation loss every N steps",
-)
-parser.add_argument(
-    "--generate_interval",
-    type=int,
-    default=2,
-    help="Generate text samples every N steps",
-)
-parser.add_argument(
-    "--pretrained_checkpoint",
-    type=str,
-    default="logs/model_19072.pt",
-    help="Path to pretrained model checkpoint",
-)
-parser.add_argument(
-    "--data_dir",
-    type=str,
-    default="dolly15k",
-    help="Directory containing the Dolly dataset",
-)
-parser.add_argument(
-    "--batch_size",
-    type=int,
-    default=16,
-    help="Batch size",
-)
-parser.add_argument(
-    "--max_lr",
-    type=float,
-    default=6e-5,
-    help="Maximum learning rate",
-)
-parser.add_argument(
-    "--warmup_steps",
-    type=int,
-    default=1,
-    help="Number of warmup steps",
-)
-parser.add_argument(
-    "--max_steps",
-    type=int,
-    default=6,
-    help="Maximum number of training steps (default: ~1 epoch for Dolly-15k)",
-)
-args = parser.parse_args()
-
-# -----------------------------------------------------------------------------
-# 微调专用配置
-
-# 数据配置
-data_dir = args.data_dir
-batch_size = args.batch_size  # 微调使用较小的batch size
-total_batch_size = 524288  # 0.5M tokens
-assert total_batch_size % (batch_size * 1024) == 0
-grad_accum_steps = total_batch_size // (batch_size * 1024)
-
-# 优化器配置
-max_lr = args.max_lr  # 微调使用更小的学习率（预训练的1/10）
-min_lr = max_lr * 0.1
-warmup_steps = args.warmup_steps  # 更短的warmup
-weight_decay = 0.01  # 权重衰减，防止过拟合
-
-# 训练配置
-# Dolly-15k约2.8M tokens，每个step处理0.5M tokens
-# 1 epoch ≈ 2.8M / 0.5M ≈ 5-6 steps
-max_steps = args.max_steps
-
-# 评估配置
-val_loss_every = args.eval_interval
-val_max_steps = 20
-generate_every = args.generate_interval
-
-# 检查点配置
-checkpoint_interval = args.checkpoint_interval
-keep_last_n_checkpoints = args.keep_last_n_checkpoints
-auto_resume = args.auto_resume
-pretrained_checkpoint = args.pretrained_checkpoint
-
-# 系统配置
-device = "cuda" if torch.cuda.is_available() else "cpu"
-compile_model = False  # torch.compile 在某些系统上可能有问题
-seed = 1337
-torch.manual_seed(seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-
-# -----------------------------------------------------------------------------
 # 数据加载器
 
 class DataLoaderLite:
-    def __init__(self, data_root, B, T, split):
+    def __init__(self, data_root, B, T, split, device):
         self.B = B
         self.T = T
+        self.device = device
         assert split in {"train", "val"}
         
         # get the shard filenames - 与 train_gpt2.py 保持一致
@@ -185,7 +69,7 @@ class DataLoaderLite:
         if self.current_position + B * T + 1 > len(self.tokens):
             self.current_position = 0
             
-        return x.to(device), y.to(device)
+        return x.to(self.device), y.to(self.device)
     
     def get_state(self):
         return {
@@ -218,7 +102,7 @@ def clean_old_checkpoints(log_dir, keep_n):
                 print(f"Warning: Failed to remove checkpoint {checkpoint}: {e}")
 
 
-def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path, master_process=True):
+def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path, keep_last_n_checkpoints, master_process=True):
     """Save a checkpoint with all necessary state"""
     # Create a temporary file first to avoid corruption
     temp_path = checkpoint_path + ".tmp"
@@ -268,8 +152,8 @@ def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_p
             print(f"Saved checkpoint to {checkpoint_path}")
 
         # Clean old checkpoints
-        if args.keep_last_n_checkpoints > 0:
-            clean_old_checkpoints(log_dir, args.keep_last_n_checkpoints)
+        if keep_last_n_checkpoints > 0:
+            clean_old_checkpoints(log_dir, keep_last_n_checkpoints)
 
     except Exception as e:
         # Clean up temp file if save failed
@@ -375,6 +259,119 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device, mas
 # 训练循环
 
 def main():
+    # 参数解析
+    parser = argparse.ArgumentParser(description="Fine-tune GPT-2 on Dolly-15k dataset")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume from",
+    )
+    parser.add_argument(
+        "--auto_resume",
+        action="store_true",
+        help="Automatically resume from latest checkpoint",
+    )
+    parser.add_argument(
+        "--checkpoint_interval",
+        type=int,
+        default=2,
+        help="Save checkpoint every N steps",
+    )
+    parser.add_argument(
+        "--keep_last_n_checkpoints",
+        type=int,
+        default=3,
+        help="Keep only the last N checkpoints, -1 to keep all",
+    )
+    parser.add_argument(
+        "--eval_interval",
+        type=int,
+        default=2,
+        help="Evaluate validation loss every N steps",
+    )
+    parser.add_argument(
+        "--generate_interval",
+        type=int,
+        default=2,
+        help="Generate text samples every N steps",
+    )
+    parser.add_argument(
+        "--pretrained_checkpoint",
+        type=str,
+        default="logs/model_19072.pt",
+        help="Path to pretrained model checkpoint",
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="dolly15k",
+        help="Directory containing the Dolly dataset",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+        help="Batch size",
+    )
+    parser.add_argument(
+        "--max_lr",
+        type=float,
+        default=6e-5,
+        help="Maximum learning rate",
+    )
+    parser.add_argument(
+        "--warmup_steps",
+        type=int,
+        default=1,
+        help="Number of warmup steps",
+    )
+    parser.add_argument(
+        "--max_steps",
+        type=int,
+        default=6,
+        help="Maximum number of training steps (default: ~1 epoch for Dolly-15k)",
+    )
+    args = parser.parse_args()
+
+    # 微调专用配置
+    # 数据配置
+    data_dir = args.data_dir
+    batch_size = args.batch_size  # 微调使用较小的batch size
+    total_batch_size = 524288  # 0.5M tokens
+    assert total_batch_size % (batch_size * 1024) == 0
+    grad_accum_steps = total_batch_size // (batch_size * 1024)
+
+    # 优化器配置
+    max_lr = args.max_lr  # 微调使用更小的学习率（预训练的1/10）
+    min_lr = max_lr * 0.1
+    warmup_steps = args.warmup_steps  # 更短的warmup
+    weight_decay = 0.01  # 权重衰凊，防止过拟合
+
+    # 训练配置
+    # Dolly-15k约2.8M tokens，每个step处理0.5M tokens
+    # 1 epoch ≈ 2.8M / 0.5M ≈ 5-6 steps
+    max_steps = args.max_steps
+
+    # 评估配置
+    val_loss_every = args.eval_interval
+    val_max_steps = 20
+    generate_every = args.generate_interval
+
+    # 检查点配置
+    checkpoint_interval = args.checkpoint_interval
+    keep_last_n_checkpoints = args.keep_last_n_checkpoints
+    auto_resume = args.auto_resume
+    pretrained_checkpoint = args.pretrained_checkpoint
+
+    # 系统配置
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    compile_model = False  # torch.compile 在某些系统上可能有问题
+    seed = 1337
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
     # 设置DDP
     ddp = int(os.environ.get("RANK", -1)) != -1
     if ddp:
@@ -411,8 +408,9 @@ def main():
     raw_model = model.module if ddp else model
     
     # 创建数据加载器
-    train_loader = DataLoaderLite(data_dir, batch_size, 1024, "train")
-    val_loader = DataLoaderLite(data_dir, batch_size, 1024, "val")
+    print(f"Loading data from: {data_dir}")
+    train_loader = DataLoaderLite(data_dir, batch_size, 1024, "train", device)
+    val_loader = DataLoaderLite(data_dir, batch_size, 1024, "val", device)
     
     # 如果验证集为空，使用训练集的一部分
     if len(val_loader.tokens) == 0:
@@ -671,6 +669,7 @@ def main():
                     train_loader,
                     val_loss_to_save,
                     checkpoint_path,
+                    keep_last_n_checkpoints,
                     master_process,
                 )
             except Exception as e:
@@ -693,6 +692,7 @@ def main():
                 train_loader,
                 val_loss if 'val_loss' in locals() else loss_accum.item(),
                 final_path,
+                keep_last_n_checkpoints,
                 master_process,
             )
         except Exception as e:

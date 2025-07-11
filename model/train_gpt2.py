@@ -373,567 +373,568 @@ def get_most_likely_row(tokens, mask, logits):
 # DDP launch for e.g. 8 GPUs:
 # torchrun --standalone --nproc_per_node=8 train_gpt2.py
 
-# Parse command line arguments
-parser = argparse.ArgumentParser(description="Train GPT-2")
-parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
-parser.add_argument(
-    "--checkpoint_path",
-    type=str,
-    default=None,
-    help="Path to checkpoint to resume from",
-)
-parser.add_argument(
-    "--auto_resume",
-    action="store_true",
-    help="Automatically resume from latest checkpoint",
-)
-parser.add_argument(
-    "--checkpoint_interval",
-    type=int,
-    default=5000,
-    help="Save checkpoint every N steps",
-)
-parser.add_argument(
-    "--keep_last_n_checkpoints",
-    type=int,
-    default=-1,
-    help="Keep only the last N checkpoints, -1 to keep all",
-)
-parser.add_argument(
-    "--eval_interval",
-    type=int,
-    default=250,
-    help="Evaluate validation loss every N steps",
-)
-parser.add_argument(
-    "--hellaswag_interval",
-    type=int,
-    default=250,
-    help="Evaluate HellaSwag every N steps",
-)
-parser.add_argument(
-    "--generate_interval",
-    type=int,
-    default=250,
-    help="Generate text samples every N steps",
-)
-args = parser.parse_args()
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Train GPT-2")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
+    parser.add_argument(
+        "--checkpoint_path",
+        type=str,
+        default=None,
+        help="Path to checkpoint to resume from",
+    )
+    parser.add_argument(
+        "--auto_resume",
+        action="store_true",
+        help="Automatically resume from latest checkpoint",
+    )
+    parser.add_argument(
+        "--checkpoint_interval",
+        type=int,
+        default=5000,
+        help="Save checkpoint every N steps",
+    )
+    parser.add_argument(
+        "--keep_last_n_checkpoints",
+        type=int,
+        default=-1,
+        help="Keep only the last N checkpoints, -1 to keep all",
+    )
+    parser.add_argument(
+        "--eval_interval",
+        type=int,
+        default=250,
+        help="Evaluate validation loss every N steps",
+    )
+    parser.add_argument(
+        "--hellaswag_interval",
+        type=int,
+        default=250,
+        help="Evaluate HellaSwag every N steps",
+    )
+    parser.add_argument(
+        "--generate_interval",
+        type=int,
+        default=250,
+        help="Generate text samples every N steps",
+    )
+    args = parser.parse_args()
 
-# run the training loop
-from torch.distributed import init_process_group, destroy_process_group
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
+    # run the training loop
+    from torch.distributed import init_process_group, destroy_process_group
+    from torch.nn.parallel import DistributedDataParallel as DDP
+    import torch.distributed as dist
 
-# set up DDP (distributed data parallel).
-# torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
-ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
-if ddp:
-    # use of DDP atm demands CUDA, we set the device appropriately according to rank
-    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
-    init_process_group(backend="nccl")
-    ddp_rank = int(os.environ["RANK"])
-    ddp_local_rank = int(os.environ["LOCAL_RANK"])
-    ddp_world_size = int(os.environ["WORLD_SIZE"])
-    device = f"cuda:{ddp_local_rank}"
-    torch.cuda.set_device(device)
-    master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
-else:
-    # vanilla, non-DDP run
-    ddp_rank = 0
-    ddp_local_rank = 0
-    ddp_world_size = 1
-    master_process = True
-    # attempt to autodetect device
-    device = "cpu"
+    # set up DDP (distributed data parallel).
+    # torchrun command sets the env variables RANK, LOCAL_RANK, and WORLD_SIZE
+    ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
+    if ddp:
+        # use of DDP atm demands CUDA, we set the device appropriately according to rank
+        assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+        init_process_group(backend="nccl")
+        ddp_rank = int(os.environ["RANK"])
+        ddp_local_rank = int(os.environ["LOCAL_RANK"])
+        ddp_world_size = int(os.environ["WORLD_SIZE"])
+        device = f"cuda:{ddp_local_rank}"
+        torch.cuda.set_device(device)
+        master_process = ddp_rank == 0  # this process will do logging, checkpointing etc.
+    else:
+        # vanilla, non-DDP run
+        ddp_rank = 0
+        ddp_local_rank = 0
+        ddp_world_size = 1
+        master_process = True
+        # attempt to autodetect device
+        device = "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = "mps"
+        print(f"using device: {device}")
+
+    # added after video, pytorch can be serious about it's device vs. device_type distinction
+    device_type = "cuda" if device.startswith("cuda") else "cpu"
+
+    torch.manual_seed(1337)
     if torch.cuda.is_available():
-        device = "cuda"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = "mps"
-    print(f"using device: {device}")
+        torch.cuda.manual_seed(1337)
 
-# added after video, pytorch can be serious about it's device vs. device_type distinction
-device_type = "cuda" if device.startswith("cuda") else "cpu"
+    enc = tiktoken.get_encoding("gpt2")
 
-torch.manual_seed(1337)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(1337)
+    total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
+    B = 16  # micro batch size
+    T = 1024  # sequence length
+    assert (
+        total_batch_size % (B * T * ddp_world_size) == 0
+    ), "make sure total_batch_size is divisible by B * T * ddp_world_size"
+    grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
+    if master_process:
+        print(f"total desired batch size: {total_batch_size}")
+        print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
 
-enc = tiktoken.get_encoding("gpt2")
+    train_loader = DataLoaderLite(
+        B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train"
+    )
+    val_loader = DataLoaderLite(
+        B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val"
+    )
 
-total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
-B = 16  # micro batch size
-T = 1024  # sequence length
-assert (
-    total_batch_size % (B * T * ddp_world_size) == 0
-), "make sure total_batch_size is divisible by B * T * ddp_world_size"
-grad_accum_steps = total_batch_size // (B * T * ddp_world_size)
-if master_process:
-    print(f"total desired batch size: {total_batch_size}")
-    print(f"=> calculated gradient accumulation steps: {grad_accum_steps}")
+    torch.set_float32_matmul_precision("high")
 
-train_loader = DataLoaderLite(
-    B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="train"
-)
-val_loader = DataLoaderLite(
-    B=B, T=T, process_rank=ddp_rank, num_processes=ddp_world_size, split="val"
-)
+    # create model
+    model = GPT(GPTConfig(vocab_size=50304))
+    # model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
+    model.to(device)
+    use_compile = (
+        False  # torch.compile interferes with HellaSwag eval and Generation. TODO fix
+    )
+    if use_compile:
+        model = torch.compile(model)
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
+    raw_model = model.module if ddp else model  # always contains the "raw" unwrapped model
 
-torch.set_float32_matmul_precision("high")
-
-# create model
-model = GPT(GPTConfig(vocab_size=50304))
-# model = GPT.from_pretrained("gpt2") # or init from OpenAI GPT-2
-model.to(device)
-use_compile = (
-    False  # torch.compile interferes with HellaSwag eval and Generation. TODO fix
-)
-if use_compile:
-    model = torch.compile(model)
-if ddp:
-    model = DDP(model, device_ids=[ddp_local_rank])
-raw_model = model.module if ddp else model  # always contains the "raw" unwrapped model
-
-max_lr = 6e-4
-min_lr = max_lr * 0.1
-warmup_steps = 715
-max_steps = (
-    19073  # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
-)
+    max_lr = 6e-4
+    min_lr = max_lr * 0.1
+    warmup_steps = 715
+    max_steps = (
+        19073  # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+    )
 
 
-def get_lr(it):
-    # 1) linear warmup for warmup_iters steps
-    if it < warmup_steps:
-        return max_lr * (it + 1) / warmup_steps
-    # 2) if it > lr_decay_iters, return min learning rate
-    if it > max_steps:
-        return min_lr
-    # 3) in between, use cosine decay down to min learning rate
-    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-    assert 0 <= decay_ratio <= 1
-    coeff = 0.5 * (
-        1.0 + math.cos(math.pi * decay_ratio)
-    )  # coeff starts at 1 and goes to 0
-    return min_lr + coeff * (max_lr - min_lr)
+    def get_lr(it):
+        # 1) linear warmup for warmup_iters steps
+        if it < warmup_steps:
+            return max_lr * (it + 1) / warmup_steps
+        # 2) if it > lr_decay_iters, return min learning rate
+        if it > max_steps:
+            return min_lr
+        # 3) in between, use cosine decay down to min learning rate
+        decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+        assert 0 <= decay_ratio <= 1
+        coeff = 0.5 * (
+            1.0 + math.cos(math.pi * decay_ratio)
+        )  # coeff starts at 1 and goes to 0
+        return min_lr + coeff * (max_lr - min_lr)
 
 
-# optimize!
-optimizer = raw_model.configure_optimizers(
-    weight_decay=0.1, learning_rate=6e-4, device_type=device_type
-)
+    # optimize!
+    optimizer = raw_model.configure_optimizers(
+        weight_decay=0.1, learning_rate=6e-4, device_type=device_type
+    )
 
-# create the log directory we will write checkpoints to and log to
-log_dir = "log"
-os.makedirs(log_dir, exist_ok=True)
-log_file = os.path.join(log_dir, f"log.txt")
-# Only clear log file if starting fresh, not resuming
-if not (args.resume or args.auto_resume):
-    with open(log_file, "w") as f:  # open for writing to clear the file
-        pass
+    # create the log directory we will write checkpoints to and log to
+    log_dir = "log"
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"log.txt")
+    # Only clear log file if starting fresh, not resuming
+    if not (args.resume or args.auto_resume):
+        with open(log_file, "w") as f:  # open for writing to clear the file
+            pass
 
 
-# checkpoint loading functionality
-def clean_old_checkpoints(log_dir, keep_n):
-    """Keep only the last N checkpoints"""
-    if keep_n <= 0:
-        return  # Don't clean if keep_n is invalid
+    # checkpoint loading functionality
+    def clean_old_checkpoints(log_dir, keep_n):
+        """Keep only the last N checkpoints"""
+        if keep_n <= 0:
+            return  # Don't clean if keep_n is invalid
 
-    checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
-    if not checkpoints:
-        return  # No checkpoints to clean
+        checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
+        if not checkpoints:
+            return  # No checkpoints to clean
 
-    checkpoints.sort(key=os.path.getctime)
+        checkpoints.sort(key=os.path.getctime)
 
-    if len(checkpoints) > keep_n:
-        for checkpoint in checkpoints[:-keep_n]:
+        if len(checkpoints) > keep_n:
+            for checkpoint in checkpoints[:-keep_n]:
+                try:
+                    os.remove(checkpoint)
+                    if master_process:
+                        print(f"Removed old checkpoint: {checkpoint}")
+                except OSError as e:
+                    if master_process:
+                        print(f"Warning: Failed to remove checkpoint {checkpoint}: {e}")
+
+
+    def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path):
+        """Save a checkpoint with all necessary state"""
+        # Create a temporary file first to avoid corruption
+        temp_path = checkpoint_path + ".tmp"
+
+        try:
+            # 确保 RNG 状态是正确的格式
+            rng_state = torch.get_rng_state()
+            if rng_state.dtype != torch.uint8:
+                rng_state = rng_state.to(torch.uint8)
+            
+            cuda_rng_state = None
+            if torch.cuda.is_available():
+                cuda_rng_state = torch.cuda.get_rng_state()
+                if cuda_rng_state.dtype != torch.uint8:
+                    cuda_rng_state = cuda_rng_state.to(torch.uint8)
+            
+            checkpoint = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "config": model.config,
+                "step": step,
+                "val_loss": val_loss,
+                "train_loader_state": train_loader.get_state(),
+                "rng_state": rng_state,
+                "cuda_rng_state": cuda_rng_state,
+                "numpy_rng_state": np.random.get_state(),
+                "python_rng_state": random.getstate(),
+            }
+
+            # Save to temporary file first
+            torch.save(checkpoint, temp_path)
+
+            # Atomically rename to final path
+            os.rename(temp_path, checkpoint_path)
+
+            # save a symlink to the latest checkpoint
+            latest_path = os.path.join(log_dir, "latest_checkpoint.pt")
             try:
-                os.remove(checkpoint)
-                if master_process:
-                    print(f"Removed old checkpoint: {checkpoint}")
+                if os.path.exists(latest_path) or os.path.islink(latest_path):
+                    os.remove(latest_path)
+                os.symlink(os.path.basename(checkpoint_path), latest_path)
             except OSError as e:
                 if master_process:
-                    print(f"Warning: Failed to remove checkpoint {checkpoint}: {e}")
-
-
-def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path):
-    """Save a checkpoint with all necessary state"""
-    # Create a temporary file first to avoid corruption
-    temp_path = checkpoint_path + ".tmp"
-
-    try:
-        # 确保 RNG 状态是正确的格式
-        rng_state = torch.get_rng_state()
-        if rng_state.dtype != torch.uint8:
-            rng_state = rng_state.to(torch.uint8)
-        
-        cuda_rng_state = None
-        if torch.cuda.is_available():
-            cuda_rng_state = torch.cuda.get_rng_state()
-            if cuda_rng_state.dtype != torch.uint8:
-                cuda_rng_state = cuda_rng_state.to(torch.uint8)
-        
-        checkpoint = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "config": model.config,
-            "step": step,
-            "val_loss": val_loss,
-            "train_loader_state": train_loader.get_state(),
-            "rng_state": rng_state,
-            "cuda_rng_state": cuda_rng_state,
-            "numpy_rng_state": np.random.get_state(),
-            "python_rng_state": random.getstate(),
-        }
-
-        # Save to temporary file first
-        torch.save(checkpoint, temp_path)
-
-        # Atomically rename to final path
-        os.rename(temp_path, checkpoint_path)
-
-        # save a symlink to the latest checkpoint
-        latest_path = os.path.join(log_dir, "latest_checkpoint.pt")
-        try:
-            if os.path.exists(latest_path) or os.path.islink(latest_path):
-                os.remove(latest_path)
-            os.symlink(os.path.basename(checkpoint_path), latest_path)
-        except OSError as e:
+                    print(f"Warning: Failed to create latest checkpoint symlink: {e}")
             if master_process:
-                print(f"Warning: Failed to create latest checkpoint symlink: {e}")
-        if master_process:
-            print(f"Saved checkpoint to {checkpoint_path}")
+                print(f"Saved checkpoint to {checkpoint_path}")
 
-        # Clean old checkpoints
-        if args.keep_last_n_checkpoints > 0:
-            clean_old_checkpoints(log_dir, args.keep_last_n_checkpoints)
+            # Clean old checkpoints
+            if args.keep_last_n_checkpoints > 0:
+                clean_old_checkpoints(log_dir, args.keep_last_n_checkpoints)
 
-    except Exception as e:
-        # Clean up temp file if save failed
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-        if master_process:
-            print(f"Error: Failed to save checkpoint: {e}")
-        raise
-
-
-def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
-    """Load a checkpoint and restore all state"""
-    if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
-    try:
-        # PyTorch 2.6+ 需要设置 weights_only=False 来加载包含 Python 对象的 checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load checkpoint {checkpoint_path}: {e}")
-
-    # Verify checkpoint has all required keys
-    required_keys = [
-        "model",
-        "optimizer",
-        "train_loader_state",
-        "step",
-        "rng_state",
-        "numpy_rng_state",
-        "python_rng_state",
-    ]
-    missing_keys = [key for key in required_keys if key not in checkpoint]
-    if missing_keys:
-        raise KeyError(f"Checkpoint missing required keys: {missing_keys}")
-
-    model.load_state_dict(checkpoint["model"])
-    optimizer.load_state_dict(checkpoint["optimizer"])
-    train_loader.load_state(checkpoint["train_loader_state"])
-
-    # Restore random states
-    rng_state = checkpoint["rng_state"]
-    
-    # PyTorch 的 set_rng_state 在新版本中对类型要求严格
-    # 我们需要确保它是正确的格式
-    if isinstance(rng_state, torch.Tensor):
-        # 确保是 CPU 上的连续张量
-        rng_state = rng_state.cpu().contiguous()
-        # 确保是 uint8 类型
-        if rng_state.dtype != torch.uint8:
-            rng_state = rng_state.to(torch.uint8)
-        
-        # 尝试不同的方法设置状态
-        try:
-            # 方法1: 直接设置
-            torch.set_rng_state(rng_state)
-        except TypeError:
-            try:
-                # 方法2: 使用 torch.ByteTensor (旧版兼容)
-                import torch as torch_module
-                if hasattr(torch_module, 'ByteTensor'):
-                    # 转换为 ByteTensor
-                    rng_state_bytes = torch_module.ByteTensor(rng_state.size())
-                    rng_state_bytes.copy_(rng_state)
-                    torch.set_rng_state(rng_state_bytes)
-                else:
-                    raise
-            except:
-                # 方法3: 使用 Generator API
-                gen = torch.Generator()
-                gen.set_state(rng_state)
-                # 获取种子并重新设置
-                seed = gen.initial_seed()
-                torch.manual_seed(seed)
-                if master_process:
-                    print("Warning: RNG state partially restored using seed")
-    
-    # 恢复 CUDA RNG 状态
-    if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
-        cuda_rng_state = checkpoint["cuda_rng_state"]
-        if isinstance(cuda_rng_state, torch.Tensor):
-            cuda_rng_state = cuda_rng_state.cpu().contiguous()
-            if cuda_rng_state.dtype != torch.uint8:
-                cuda_rng_state = cuda_rng_state.to(torch.uint8)
-        
-        try:
-            torch.cuda.set_rng_state(cuda_rng_state)
         except Exception as e:
+            # Clean up temp file if save failed
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except:
+                    pass
             if master_process:
-                print(f"Warning: Could not restore CUDA RNG state: {e}")
-    
-    np.random.set_state(checkpoint["numpy_rng_state"])
-    random.setstate(checkpoint["python_rng_state"])
-
-    start_step = checkpoint["step"] + 1  # Resume from next step
-    if master_process:
-        print(f"Resumed from checkpoint at step {checkpoint['step']}")
-    return start_step
+                print(f"Error: Failed to save checkpoint: {e}")
+            raise
 
 
-# Determine the starting step
-start_step = 0
-if args.resume or args.auto_resume:
-    checkpoint_path = args.checkpoint_path
-    if args.auto_resume and checkpoint_path is None:
-        # Find the latest checkpoint
-        latest_symlink = os.path.join(log_dir, "latest_checkpoint.pt")
-        if os.path.islink(latest_symlink) and os.path.exists(latest_symlink):
-            # Prefer using the latest symlink if it exists
-            checkpoint_path = os.path.join(log_dir, os.readlink(latest_symlink))
+    def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
+        """Load a checkpoint and restore all state"""
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+
+        try:
+            # PyTorch 2.6+ 需要设置 weights_only=False 来加载包含 Python 对象的 checkpoint
+            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load checkpoint {checkpoint_path}: {e}")
+
+        # Verify checkpoint has all required keys
+        required_keys = [
+            "model",
+            "optimizer",
+            "train_loader_state",
+            "step",
+            "rng_state",
+            "numpy_rng_state",
+            "python_rng_state",
+        ]
+        missing_keys = [key for key in required_keys if key not in checkpoint]
+        if missing_keys:
+            raise KeyError(f"Checkpoint missing required keys: {missing_keys}")
+
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        train_loader.load_state(checkpoint["train_loader_state"])
+
+        # Restore random states
+        rng_state = checkpoint["rng_state"]
+        
+        # PyTorch 的 set_rng_state 在新版本中对类型要求严格
+        # 我们需要确保它是正确的格式
+        if isinstance(rng_state, torch.Tensor):
+            # 确保是 CPU 上的连续张量
+            rng_state = rng_state.cpu().contiguous()
+            # 确保是 uint8 类型
+            if rng_state.dtype != torch.uint8:
+                rng_state = rng_state.to(torch.uint8)
+            
+            # 尝试不同的方法设置状态
+            try:
+                # 方法1: 直接设置
+                torch.set_rng_state(rng_state)
+            except TypeError:
+                try:
+                    # 方法2: 使用 torch.ByteTensor (旧版兼容)
+                    import torch as torch_module
+                    if hasattr(torch_module, 'ByteTensor'):
+                        # 转换为 ByteTensor
+                        rng_state_bytes = torch_module.ByteTensor(rng_state.size())
+                        rng_state_bytes.copy_(rng_state)
+                        torch.set_rng_state(rng_state_bytes)
+                    else:
+                        raise
+                except:
+                    # 方法3: 使用 Generator API
+                    gen = torch.Generator()
+                    gen.set_state(rng_state)
+                    # 获取种子并重新设置
+                    seed = gen.initial_seed()
+                    torch.manual_seed(seed)
+                    if master_process:
+                        print("Warning: RNG state partially restored using seed")
+        
+        # 恢复 CUDA RNG 状态
+        if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
+            cuda_rng_state = checkpoint["cuda_rng_state"]
+            if isinstance(cuda_rng_state, torch.Tensor):
+                cuda_rng_state = cuda_rng_state.cpu().contiguous()
+                if cuda_rng_state.dtype != torch.uint8:
+                    cuda_rng_state = cuda_rng_state.to(torch.uint8)
+            
+            try:
+                torch.cuda.set_rng_state(cuda_rng_state)
+            except Exception as e:
+                if master_process:
+                    print(f"Warning: Could not restore CUDA RNG state: {e}")
+        
+        np.random.set_state(checkpoint["numpy_rng_state"])
+        random.setstate(checkpoint["python_rng_state"])
+
+        start_step = checkpoint["step"] + 1  # Resume from next step
+        if master_process:
+            print(f"Resumed from checkpoint at step {checkpoint['step']}")
+        return start_step
+
+
+    # Determine the starting step
+    start_step = 0
+    if args.resume or args.auto_resume:
+        checkpoint_path = args.checkpoint_path
+        if args.auto_resume and checkpoint_path is None:
+            # Find the latest checkpoint
+            latest_symlink = os.path.join(log_dir, "latest_checkpoint.pt")
+            if os.path.islink(latest_symlink) and os.path.exists(latest_symlink):
+                # Prefer using the latest symlink if it exists
+                checkpoint_path = os.path.join(log_dir, os.readlink(latest_symlink))
+                if master_process:
+                    print(
+                        f"Auto-resuming from latest checkpoint (via symlink): {checkpoint_path}"
+                    )
+            else:
+                # Fallback to finding the latest by timestamp
+                checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
+                if checkpoints:
+                    checkpoint_path = max(checkpoints, key=os.path.getctime)
+                    if master_process:
+                        print(f"Auto-resuming from latest checkpoint: {checkpoint_path}")
+
+        # In DDP, ensure all processes use the same checkpoint
+        if ddp:
+            # Broadcast checkpoint path from master to all processes
             if master_process:
-                print(
-                    f"Auto-resuming from latest checkpoint (via symlink): {checkpoint_path}"
+                # Convert checkpoint path to bytes for broadcasting
+                path_bytes = checkpoint_path.encode("utf-8") if checkpoint_path else b""
+                path_length = torch.tensor(
+                    [len(path_bytes)], dtype=torch.int64, device=device
                 )
-        else:
-            # Fallback to finding the latest by timestamp
-            checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
-            if checkpoints:
-                checkpoint_path = max(checkpoints, key=os.path.getctime)
+            else:
+                path_length = torch.tensor([0], dtype=torch.int64, device=device)
+
+            # Broadcast length first
+            dist.broadcast(path_length, 0)
+
+            # Prepare buffer for path
+            if not master_process:
+                path_bytes = torch.zeros(
+                    path_length.item(), dtype=torch.uint8, device=device
+                )
+            else:
+                path_bytes = torch.tensor(
+                    list(path_bytes), dtype=torch.uint8, device=device
+                )
+
+            # Broadcast the actual path
+            dist.broadcast(path_bytes, 0)
+
+            # Decode on non-master processes
+            if not master_process and path_length.item() > 0:
+                checkpoint_path = bytes(path_bytes.cpu().numpy()).decode("utf-8")
+            elif not master_process:
+                checkpoint_path = None
+
+        if checkpoint_path:
+            try:
+                start_step = load_checkpoint(
+                    checkpoint_path, raw_model, optimizer, train_loader, device
+                )
+            except (FileNotFoundError, RuntimeError, KeyError) as e:
                 if master_process:
-                    print(f"Auto-resuming from latest checkpoint: {checkpoint_path}")
-
-    # In DDP, ensure all processes use the same checkpoint
-    if ddp:
-        # Broadcast checkpoint path from master to all processes
-        if master_process:
-            # Convert checkpoint path to bytes for broadcasting
-            path_bytes = checkpoint_path.encode("utf-8") if checkpoint_path else b""
-            path_length = torch.tensor(
-                [len(path_bytes)], dtype=torch.int64, device=device
-            )
+                    print(f"Error loading checkpoint: {e}")
+                    print("Starting from scratch...")
+                start_step = 0
         else:
-            path_length = torch.tensor([0], dtype=torch.int64, device=device)
+            if args.resume and master_process:
+                print("Warning: No checkpoint specified or found, starting from scratch")
 
-        # Broadcast length first
-        dist.broadcast(path_length, 0)
+    for step in range(start_step, max_steps):
+        t0 = time.time()
+        last_step = step == max_steps - 1
 
-        # Prepare buffer for path
-        if not master_process:
-            path_bytes = torch.zeros(
-                path_length.item(), dtype=torch.uint8, device=device
-            )
-        else:
-            path_bytes = torch.tensor(
-                list(path_bytes), dtype=torch.uint8, device=device
-            )
-
-        # Broadcast the actual path
-        dist.broadcast(path_bytes, 0)
-
-        # Decode on non-master processes
-        if not master_process and path_length.item() > 0:
-            checkpoint_path = bytes(path_bytes.cpu().numpy()).decode("utf-8")
-        elif not master_process:
-            checkpoint_path = None
-
-    if checkpoint_path:
-        try:
-            start_step = load_checkpoint(
-                checkpoint_path, raw_model, optimizer, train_loader, device
-            )
-        except (FileNotFoundError, RuntimeError, KeyError) as e:
+        # once in a while evaluate our validation loss
+        if step % args.eval_interval == 0 or last_step:
+            model.eval()
+            val_loader.reset()
+            with torch.no_grad():
+                val_loss_accum = 0.0
+                val_loss_steps = 20
+                for _ in range(val_loss_steps):
+                    x, y = val_loader.next_batch()
+                    x, y = x.to(device), y.to(device)
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        logits, loss = model(x, y)
+                    loss = loss / val_loss_steps
+                    val_loss_accum += loss.detach()
+            if ddp:
+                dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
             if master_process:
-                print(f"Error loading checkpoint: {e}")
-                print("Starting from scratch...")
-            start_step = 0
-    else:
-        if args.resume and master_process:
-            print("Warning: No checkpoint specified or found, starting from scratch")
+                print(f"validation loss: {val_loss_accum.item():.4f}")
+                with open(log_file, "a") as f:
+                    f.write(f"{step} val {val_loss_accum.item():.4f}\n")
+        
+        # checkpoint saving logic (moved outside validation block)
+        if master_process and step > 0 and (step % args.checkpoint_interval == 0 or last_step):
+            # optionally write model checkpoints
+            checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
+            # Use the last validation loss if available, otherwise use current training loss
+            val_loss_to_save = val_loss_accum.item() if 'val_loss_accum' in locals() else loss_accum.item()
+            try:
+                save_checkpoint(
+                    step,
+                    raw_model,
+                    optimizer,
+                    train_loader,
+                    val_loss_to_save,
+                    checkpoint_path,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to save checkpoint at step {step}: {e}")
+                print("Training will continue, but checkpoint was not saved.")
 
-for step in range(start_step, max_steps):
-    t0 = time.time()
-    last_step = step == max_steps - 1
+        # once in a while evaluate hellaswag
+        if (step % args.hellaswag_interval == 0 or last_step) and (not use_compile):
+            num_correct_norm = 0
+            num_total = 0
+            for i, example in enumerate(iterate_examples("val")):
+                # only process examples where i % ddp_world_size == ddp_rank
+                if i % ddp_world_size != ddp_rank:
+                    continue
+                # render the example into tokens and labels
+                _, tokens, mask, label = render_example(example)
+                tokens = tokens.to(device)
+                mask = mask.to(device)
+                # get the logits
+                with torch.no_grad():
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        logits, loss = model(tokens)
+                    pred_norm = get_most_likely_row(tokens, mask, logits)
+                num_total += 1
+                num_correct_norm += int(pred_norm == label)
+            # reduce the stats across all processes
+            if ddp:
+                num_total = torch.tensor(num_total, dtype=torch.long, device=device)
+                num_correct_norm = torch.tensor(
+                    num_correct_norm, dtype=torch.long, device=device
+                )
+                dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
+                dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+                num_total = num_total.item()
+                num_correct_norm = num_correct_norm.item()
+            acc_norm = num_correct_norm / num_total
+            if master_process:
+                print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
+                with open(log_file, "a") as f:
+                    f.write(f"{step} hella {acc_norm:.4f}\n")
 
-    # once in a while evaluate our validation loss
-    if step % args.eval_interval == 0 or last_step:
-        model.eval()
-        val_loader.reset()
-        with torch.no_grad():
-            val_loss_accum = 0.0
-            val_loss_steps = 20
-            for _ in range(val_loss_steps):
-                x, y = val_loader.next_batch()
-                x, y = x.to(device), y.to(device)
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(x, y)
-                loss = loss / val_loss_steps
-                val_loss_accum += loss.detach()
+        # once in a while generate from the model (except step 0, which is noise)
+        if ((step > 0 and step % args.generate_interval == 0) or last_step) and (not use_compile):
+            model.eval()
+            num_return_sequences = 4
+            max_length = 32
+            tokens = enc.encode("Hello, I'm a language model,")
+            tokens = torch.tensor(tokens, dtype=torch.long)
+            tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
+            xgen = tokens.to(device)
+            sample_rng = torch.Generator(device=device)
+            sample_rng.manual_seed(42 + ddp_rank)
+            while xgen.size(1) < max_length:
+                # forward the model to get the logits
+                with torch.no_grad():
+                    with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                        logits, loss = model(xgen)  # (B, T, vocab_size)
+                    # take the logits at the last position
+                    logits = logits[:, -1, :]  # (B, vocab_size)
+                    # get the probabilities
+                    probs = F.softmax(logits, dim=-1)
+                    # do top-k sampling of 50 (huggingface pipeline default)
+                    # topk_probs here becomes (5, 50), topk_indices is (5, 50)
+                    topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
+                    # select a token from the top-k probabilities
+                    # note: multinomial does not demand the input to sum to 1
+                    ix = torch.multinomial(topk_probs, 1, generator=sample_rng)  # (B, 1)
+                    # gather the corresponding indices
+                    xcol = torch.gather(topk_indices, -1, ix)  # (B, 1)
+                    # append to the sequence
+                    xgen = torch.cat((xgen, xcol), dim=1)
+            # print the generated text
+            for i in range(num_return_sequences):
+                tokens = xgen[i, :max_length].tolist()
+                decoded = enc.decode(tokens)
+                print(f"rank {ddp_rank} sample {i}: {decoded}")
+
+        # do one step of the optimization
+        model.train()
+        optimizer.zero_grad()
+        loss_accum = 0.0
+        for micro_step in range(grad_accum_steps):
+            x, y = train_loader.next_batch()
+            x, y = x.to(device), y.to(device)
+            # added after video, this field is also used by the forward pass.
+            if ddp:
+                model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                logits, loss = model(x, y)
+            # we have to scale the loss to account for gradient accumulation,
+            # because the gradients just add on each successive backward().
+            # addition of gradients corresponds to a SUM in the objective, but
+            # instead of a SUM we want MEAN. Scale the loss here so it comes out right
+            loss = loss / grad_accum_steps
+            loss_accum += loss.detach()
+            loss.backward()
         if ddp:
-            dist.all_reduce(val_loss_accum, op=dist.ReduceOp.AVG)
-        if master_process:
-            print(f"validation loss: {val_loss_accum.item():.4f}")
-            with open(log_file, "a") as f:
-                f.write(f"{step} val {val_loss_accum.item():.4f}\n")
-    
-    # checkpoint saving logic (moved outside validation block)
-    if master_process and step > 0 and (step % args.checkpoint_interval == 0 or last_step):
-        # optionally write model checkpoints
-        checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
-        # Use the last validation loss if available, otherwise use current training loss
-        val_loss_to_save = val_loss_accum.item() if 'val_loss_accum' in locals() else loss_accum.item()
-        try:
-            save_checkpoint(
-                step,
-                raw_model,
-                optimizer,
-                train_loader,
-                val_loss_to_save,
-                checkpoint_path,
-            )
-        except Exception as e:
-            print(f"Warning: Failed to save checkpoint at step {step}: {e}")
-            print("Training will continue, but checkpoint was not saved.")
-
-    # once in a while evaluate hellaswag
-    if (step % args.hellaswag_interval == 0 or last_step) and (not use_compile):
-        num_correct_norm = 0
-        num_total = 0
-        for i, example in enumerate(iterate_examples("val")):
-            # only process examples where i % ddp_world_size == ddp_rank
-            if i % ddp_world_size != ddp_rank:
-                continue
-            # render the example into tokens and labels
-            _, tokens, mask, label = render_example(example)
-            tokens = tokens.to(device)
-            mask = mask.to(device)
-            # get the logits
-            with torch.no_grad():
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(tokens)
-                pred_norm = get_most_likely_row(tokens, mask, logits)
-            num_total += 1
-            num_correct_norm += int(pred_norm == label)
-        # reduce the stats across all processes
-        if ddp:
-            num_total = torch.tensor(num_total, dtype=torch.long, device=device)
-            num_correct_norm = torch.tensor(
-                num_correct_norm, dtype=torch.long, device=device
-            )
-            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
-            dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
-            num_total = num_total.item()
-            num_correct_norm = num_correct_norm.item()
-        acc_norm = num_correct_norm / num_total
-        if master_process:
-            print(f"HellaSwag accuracy: {num_correct_norm}/{num_total}={acc_norm:.4f}")
-            with open(log_file, "a") as f:
-                f.write(f"{step} hella {acc_norm:.4f}\n")
-
-    # once in a while generate from the model (except step 0, which is noise)
-    if ((step > 0 and step % args.generate_interval == 0) or last_step) and (not use_compile):
-        model.eval()
-        num_return_sequences = 4
-        max_length = 32
-        tokens = enc.encode("Hello, I'm a language model,")
-        tokens = torch.tensor(tokens, dtype=torch.long)
-        tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
-        xgen = tokens.to(device)
-        sample_rng = torch.Generator(device=device)
-        sample_rng.manual_seed(42 + ddp_rank)
-        while xgen.size(1) < max_length:
-            # forward the model to get the logits
-            with torch.no_grad():
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-                    logits, loss = model(xgen)  # (B, T, vocab_size)
-                # take the logits at the last position
-                logits = logits[:, -1, :]  # (B, vocab_size)
-                # get the probabilities
-                probs = F.softmax(logits, dim=-1)
-                # do top-k sampling of 50 (huggingface pipeline default)
-                # topk_probs here becomes (5, 50), topk_indices is (5, 50)
-                topk_probs, topk_indices = torch.topk(probs, 50, dim=-1)
-                # select a token from the top-k probabilities
-                # note: multinomial does not demand the input to sum to 1
-                ix = torch.multinomial(topk_probs, 1, generator=sample_rng)  # (B, 1)
-                # gather the corresponding indices
-                xcol = torch.gather(topk_indices, -1, ix)  # (B, 1)
-                # append to the sequence
-                xgen = torch.cat((xgen, xcol), dim=1)
-        # print the generated text
-        for i in range(num_return_sequences):
-            tokens = xgen[i, :max_length].tolist()
-            decoded = enc.decode(tokens)
-            print(f"rank {ddp_rank} sample {i}: {decoded}")
-
-    # do one step of the optimization
-    model.train()
-    optimizer.zero_grad()
-    loss_accum = 0.0
-    for micro_step in range(grad_accum_steps):
-        x, y = train_loader.next_batch()
-        x, y = x.to(device), y.to(device)
-        # added after video, this field is also used by the forward pass.
-        if ddp:
-            model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
-        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
-            logits, loss = model(x, y)
-        # we have to scale the loss to account for gradient accumulation,
-        # because the gradients just add on each successive backward().
-        # addition of gradients corresponds to a SUM in the objective, but
-        # instead of a SUM we want MEAN. Scale the loss here so it comes out right
-        loss = loss / grad_accum_steps
-        loss_accum += loss.detach()
-        loss.backward()
-    if ddp:
-        dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    # determine and set the learning rate for this iteration
-    lr = get_lr(step)
-    for param_group in optimizer.param_groups:
-        param_group["lr"] = lr
-    optimizer.step()
-    if device_type == "cuda":
-        torch.cuda.synchronize()  # wait for the GPU to finish work
-    t1 = time.time()
-    dt = t1 - t0  # time difference in seconds
-    tokens_processed = (
-        train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
-    )
-    tokens_per_sec = tokens_processed / dt
-    if master_process:
-        print(
-            f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+            dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
+        norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        # determine and set the learning rate for this iteration
+        lr = get_lr(step)
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = lr
+        optimizer.step()
+        if device_type == "cuda":
+            torch.cuda.synchronize()  # wait for the GPU to finish work
+        t1 = time.time()
+        dt = t1 - t0  # time difference in seconds
+        tokens_processed = (
+            train_loader.B * train_loader.T * grad_accum_steps * ddp_world_size
         )
-        with open(log_file, "a") as f:
-            f.write(f"{step} train {loss_accum.item():.6f}\n")
+        tokens_per_sec = tokens_processed / dt
+        if master_process:
+            print(
+                f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}"
+            )
+            with open(log_file, "a") as f:
+                f.write(f"{step} train {loss_accum.item():.6f}\n")
 
-if ddp:
-    destroy_process_group()
+    if ddp:
+        destroy_process_group()
