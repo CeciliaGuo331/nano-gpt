@@ -651,34 +651,50 @@ def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device):
     # Restore random states
     rng_state = checkpoint["rng_state"]
     
-    # 直接调用底层 C++ 函数，绕过 Python 层的类型检查
-    import torch._C
-    torch._C._cuda_setDevice(device.index if hasattr(device, 'index') else 0)
-    
-    # 使用底层 API 恢复状态
+    # PyTorch 的 set_rng_state 在新版本中对类型要求严格
+    # 我们需要确保它是正确的格式
     if isinstance(rng_state, torch.Tensor):
-        # 确保是正确的张量类型
-        rng_state_bytes = rng_state.cpu().contiguous()
-        if rng_state_bytes.dtype != torch.uint8:
-            rng_state_bytes = rng_state_bytes.to(torch.uint8)
-        # 使用新的方法
-        gen = torch.Generator()
-        gen.set_state(rng_state_bytes)
-        torch.manual_seed(gen.initial_seed())
-        # 复制全部状态
-        default_gen = torch.default_generator
-        default_gen.set_state(rng_state_bytes)
+        # 确保是 CPU 上的连续张量
+        rng_state = rng_state.cpu().contiguous()
+        # 确保是 uint8 类型
+        if rng_state.dtype != torch.uint8:
+            rng_state = rng_state.to(torch.uint8)
+        
+        # 尝试不同的方法设置状态
+        try:
+            # 方法1: 直接设置
+            torch.set_rng_state(rng_state)
+        except TypeError:
+            try:
+                # 方法2: 使用 torch.ByteTensor (旧版兼容)
+                import torch as torch_module
+                if hasattr(torch_module, 'ByteTensor'):
+                    # 转换为 ByteTensor
+                    rng_state_bytes = torch_module.ByteTensor(rng_state.size())
+                    rng_state_bytes.copy_(rng_state)
+                    torch.set_rng_state(rng_state_bytes)
+                else:
+                    raise
+            except:
+                # 方法3: 使用 Generator API
+                gen = torch.Generator()
+                gen.set_state(rng_state)
+                # 获取种子并重新设置
+                seed = gen.initial_seed()
+                torch.manual_seed(seed)
+                if master_process:
+                    print("Warning: RNG state partially restored using seed")
     
+    # 恢复 CUDA RNG 状态
     if torch.cuda.is_available() and checkpoint.get("cuda_rng_state") is not None:
         cuda_rng_state = checkpoint["cuda_rng_state"]
         if isinstance(cuda_rng_state, torch.Tensor):
             cuda_rng_state = cuda_rng_state.cpu().contiguous()
             if cuda_rng_state.dtype != torch.uint8:
                 cuda_rng_state = cuda_rng_state.to(torch.uint8)
+        
         try:
-            # 为当前设备设置 CUDA RNG 状态
-            current_device = torch.cuda.current_device()
-            torch.cuda.set_rng_state(cuda_rng_state, current_device)
+            torch.cuda.set_rng_state(cuda_rng_state)
         except Exception as e:
             if master_process:
                 print(f"Warning: Could not restore CUDA RNG state: {e}")
