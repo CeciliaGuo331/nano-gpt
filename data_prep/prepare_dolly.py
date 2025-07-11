@@ -17,6 +17,7 @@ from tqdm import tqdm
 # ------------------------------------------
 local_dir = "dolly15k"
 shard_size = int(1e7)  # 10M tokens per shard, more suitable for fine-tuning
+val_split_ratio = 0.1  # 10% for validation
 
 # create the cache the local directory if it doesn't exist yet
 DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', local_dir)
@@ -25,6 +26,14 @@ os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 # download the dataset
 print("Loading Dolly-15k dataset...")
 ds = load_dataset("databricks/databricks-dolly-15k", split="train")
+
+# Split into train and validation
+print(f"Splitting dataset: {int((1-val_split_ratio)*100)}% train, {int(val_split_ratio*100)}% validation")
+val_size = int(len(ds) * val_split_ratio)
+train_size = len(ds) - val_size
+ds_train = ds.select(range(train_size))
+ds_val = ds.select(range(train_size, len(ds)))
+print(f"Train samples: {len(ds_train)}, Validation samples: {len(ds_val)}")
 
 # init the tokenizer
 enc = tiktoken.get_encoding("gpt2")
@@ -61,48 +70,60 @@ def write_datafile(filename, tokens_np):
     """Write tokens to a numpy file."""
     np.save(filename, tokens_np)
 
-# tokenize all documents and write output shards
-print(f"Tokenizing {len(ds)} samples...")
-nprocs = max(1, os.cpu_count()//2)
-with mp.Pool(nprocs) as pool:
-    shard_index = 0
-    # preallocate buffer to hold current shard
-    all_tokens_np = np.empty((shard_size,), dtype=np.uint16)
-    token_count = 0
-    progress_bar = None
+def process_split(dataset, split_name):
+    """Process and save a dataset split."""
+    print(f"\nProcessing {split_name} split...")
+    nprocs = max(1, os.cpu_count()//2)
     
-    for tokens in pool.imap(tokenize, ds, chunksize=16):
-        # is there enough space in the current shard for the new tokens?
-        if token_count + len(tokens) < shard_size:
-            # simply append tokens to current shard
-            all_tokens_np[token_count:token_count+len(tokens)] = tokens
-            token_count += len(tokens)
-            # update progress bar
-            if progress_bar is None:
-                progress_bar = tqdm(total=shard_size, unit="tokens", desc=f"Shard {shard_index}")
-            progress_bar.update(len(tokens))
-        else:
-            # write the current shard and start a new one
-            split = "val" if shard_index == 0 else "train"
-            filename = os.path.join(DATA_CACHE_DIR, f"dolly_{split}_{shard_index:06d}")
-            # split the document into whatever fits in this shard; the remainder goes to next one
-            remainder = shard_size - token_count
-            progress_bar.update(remainder)
-            all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
-            write_datafile(filename, all_tokens_np)
+    with mp.Pool(nprocs) as pool:
+        shard_index = 0
+        # preallocate buffer to hold current shard
+        all_tokens_np = np.empty((shard_size,), dtype=np.uint16)
+        token_count = 0
+        progress_bar = None
+        
+        for tokens in pool.imap(tokenize, dataset, chunksize=16):
+            # is there enough space in the current shard for the new tokens?
+            if token_count + len(tokens) < shard_size:
+                # simply append tokens to current shard
+                all_tokens_np[token_count:token_count+len(tokens)] = tokens
+                token_count += len(tokens)
+                # update progress bar
+                if progress_bar is None:
+                    progress_bar = tqdm(total=shard_size, unit="tokens", desc=f"{split_name} shard {shard_index}")
+                progress_bar.update(len(tokens))
+            else:
+                # write the current shard and start a new one
+                filename = os.path.join(DATA_CACHE_DIR, f"dolly_{split_name}_{shard_index:06d}")
+                # split the document into whatever fits in this shard; the remainder goes to next one
+                remainder = shard_size - token_count
+                if remainder > 0:
+                    progress_bar.update(remainder)
+                    all_tokens_np[token_count:token_count+remainder] = tokens[:remainder]
+                write_datafile(filename, all_tokens_np)
+                shard_index += 1
+                if progress_bar is not None:
+                    progress_bar.close()
+                progress_bar = None
+                # populate the next shard with the leftovers of the current doc
+                if remainder < len(tokens):
+                    all_tokens_np[0:len(tokens)-remainder] = tokens[remainder:]
+                    token_count = len(tokens)-remainder
+                else:
+                    token_count = 0
+        
+        # write any remaining tokens as the last shard
+        if token_count > 0:
+            filename = os.path.join(DATA_CACHE_DIR, f"dolly_{split_name}_{shard_index:06d}")
+            write_datafile(filename, all_tokens_np[:token_count])
+            if progress_bar is not None:
+                progress_bar.close()
             shard_index += 1
-            progress_bar = None
-            # populate the next shard with the leftovers of the current doc
-            all_tokens_np[0:len(tokens)-remainder] = tokens[remainder:]
-            token_count = len(tokens)-remainder
-    
-    # write any remaining tokens as the last shard
-    if token_count != 0:
-        split = "val" if shard_index == 0 else "train"
-        filename = os.path.join(DATA_CACHE_DIR, f"dolly_{split}_{shard_index:06d}")
-        write_datafile(filename, all_tokens_np[:token_count])
-        if progress_bar is not None:
-            progress_bar.close()
+        
+        print(f"{split_name}: Saved {shard_index} shards, ~{((shard_index-1) * shard_size + token_count):,} tokens")
 
-print(f"\nDone! Saved {shard_index + 1} shards to {DATA_CACHE_DIR}")
-print(f"Total tokens: ~{(shard_index * shard_size + token_count):,}")
+# Process both splits
+process_split(ds_train, "train")
+process_split(ds_val, "val")
+
+print(f"\nDone! All shards saved to {DATA_CACHE_DIR}")

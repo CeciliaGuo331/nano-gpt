@@ -8,19 +8,19 @@
 ### 基本使用
 ```bash
 # 从预训练模型开始微调
-python model/finetune_dolly.py
+python -m model.finetune_dolly
 
 # 查看所有可用参数
-python model/finetune_dolly.py --help
+python -m model.finetune_dolly --help
 ```
 
 ### 断点续训
 ```bash
 # 自动从最新检查点恢复
-python model/finetune_dolly.py --auto_resume
+python -m model.finetune_dolly --auto_resume
 
 # 从指定检查点恢复
-python model/finetune_dolly.py --resume --checkpoint_path logs_finetune/model_00100.pt
+python -m model.finetune_dolly --resume --checkpoint_path logs_finetune/model_00100.pt
 ```
 
 ### 主要命令行参数
@@ -121,37 +121,37 @@ if val_loss > best_val_loss and train_loss < prev_train_loss:
 ### 1. 从头开始微调
 ```bash
 # 使用默认预训练模型
-python model/finetune_dolly.py
+python -m model.finetune_dolly
 
 # 使用自定义预训练模型
-python model/finetune_dolly.py --pretrained_checkpoint path/to/pretrained.pt
+python -m model.finetune_dolly --pretrained_checkpoint path/to/pretrained.pt
 ```
 
 ### 2. 调整训练参数
 ```bash
 # 更小的学习率和更多训练步数
-python model/finetune_dolly.py --max_lr 3e-5 --max_steps 1750 --warmup_steps 100
+python -m model.finetune_dolly --max_lr 3e-5 --max_steps 1750 --warmup_steps 100
 
 # 更大的批次大小（需要更多显存）
-python model/finetune_dolly.py --batch_size 32
+python -m model.finetune_dolly --batch_size 32
 ```
 
 ### 3. 断点续训示例
 ```bash
 # 训练中断后，自动恢复
-python model/finetune_dolly.py --auto_resume
+python -m model.finetune_dolly --auto_resume
 
 # 从特定检查点恢复，调整学习率
-python model/finetune_dolly.py --resume --checkpoint_path logs_finetune/model_00500.pt --max_lr 1e-5
+python -m model.finetune_dolly --resume --checkpoint_path logs_finetune/model_00500.pt --max_lr 1e-5
 ```
 
 ### 4. 分布式训练
 ```bash
 # 单机多卡
-torchrun --standalone --nproc_per_node=4 model/finetune_dolly.py
+torchrun --standalone --nproc_per_node=4 -m model.finetune_dolly
 
 # 多机多卡
-torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 --master_addr=192.168.1.1 --master_port=1234 model/finetune_dolly.py
+torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 --master_addr=192.168.1.1 --master_port=1234 -m model.finetune_dolly
 ```
 
 ## 常见问题

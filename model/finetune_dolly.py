@@ -147,25 +147,14 @@ class DataLoaderLite:
         self.T = T
         assert split in {"train", "val"}
         
-        # 获取所有分片文件
-        shards = sorted(glob.glob(os.path.join(data_root, f"dolly_{split}_*.npy")))
-        if len(shards) == 0:
-            # 如果没有train/val区分，尝试加载所有分片
-            shards = sorted(glob.glob(os.path.join(data_root, "dolly_*.npy")))
-            if split == "val" and len(shards) > 0:
-                # 没有专门的验证集，使用第一个分片作为验证集
-                shards = shards[:1]
-            elif split == "train" and len(shards) > 1:
-                # 使用剩余的分片作为训练集
-                shards = shards[1:]
-            elif split == "train" and len(shards) == 1:
-                # 只有一个分片，都用作训练集
-                shards = shards
-        
-        if len(shards) == 0:
-            raise ValueError(f"No data files found in {data_root}")
-            
-        print(f"Found {len(shards)} shards for {split} split")
+        # get the shard filenames - 与 train_gpt2.py 保持一致
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split {split}"
+        print(f"found {len(shards)} shards for split {split}")
         
         # 加载并连接所有分片
         all_tokens = []
