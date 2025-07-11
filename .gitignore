@@ -4,6 +4,7 @@ __pycache__/
 # Datasets, logs, and local scripts
 edu_fineweb10B/
 hellaswag/
+dolly15k/
 git_chore.sh
 
 docs/1.txt
