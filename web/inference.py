@@ -1,6 +1,6 @@
 import torch
 import tiktoken
-from model import GPT, GPTConfig
+from ..model.train_gpt2 import GPT, GPTConfig
 
 def load_model_from_checkpoint(checkpoint_path, device='cuda'):
     """加载保存的模型用于推理"""

@@ -18,9 +18,8 @@ import random
 import inspect
 
 # 导入预训练脚本中的模型定义
-import sys
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from train_gpt2 import GPT, GPTConfig
+from dataclasses import dataclass
+from .train_gpt2 import GPT, GPTConfig
 
 # -----------------------------------------------------------------------------
 # 数据加载器

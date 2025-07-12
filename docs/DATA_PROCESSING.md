@@ -1,182 +1,160 @@
-# 数据处理与计算说明
+# 数据处理指南
 
 ## 概述
-本文档详细说明了nano-gpt项目中的数据处理方法、分片策略以及训练步数的计算方式。
 
-## 数据分片（Shard）机制
+本文档说明 nano-gpt 的数据处理流程和关键参数计算方法。
 
-### 1. 分片大小设置
-在数据准备阶段，我们使用分片来管理大规模数据集：
+## 数据准备
 
-```python
-# 预训练数据集
-shard_size = int(1e8)  # 100M tokens per shard
+### 运行数据准备脚本
 
-# 微调数据集（如Dolly-15k）
-shard_size = int(1e7)  # 10M tokens per shard
-```
-
-### 2. 分片策略对比
-
-| 数据集类型 | 分片大小 | 原因 | 效果 |
-|-----------|---------|------|------|
-| 预训练（edu_fineweb10B） | 100M tokens | 数据量巨大（10B tokens） | 100个分片文件，便于并行处理 |
-| 微调（Dolly-15k） | 10M tokens | 数据量较小（2.8M tokens） | 1个分片文件，简化管理 |
-
-### 3. 分片文件命名规则
-- 预训练：`edufineweb_train_000.npy`, `edufineweb_train_001.npy`, ...
-- 微调：`dolly_000.npy` 或 `dolly_train_000.npy`
-
-### 4. DataLoader中的分片处理
-```python
-# 训练集使用除第一个外的所有分片
-if split == "train" and len(shards) > 1:
-    shards = shards[1:]
-
-# 验证集使用第一个分片
-elif split == "val" and len(shards) > 0:
-    shards = shards[:1]
-```
-
-## 训练步数（Steps）计算
-
-### 1. 基本概念
-- **Token**: 文本的基本单位（通过tiktoken编码）
-- **Batch**: 一次前向传递处理的样本数
-- **Sequence Length**: 每个样本的token长度（固定为1024）
-- **Gradient Accumulation**: 梯度累积次数
-
-### 2. 每步处理的数据量
-
-#### 预训练配置
-```python
-batch_size = 16
-sequence_length = 1024
-total_batch_size = 524288  # 0.5M tokens
-grad_accum_steps = total_batch_size // (batch_size * sequence_length)
-# grad_accum_steps = 524288 / (16 * 1024) = 32
-```
-
-每个step处理：
-- 单次前向：16 × 1024 = 16,384 tokens
-- 梯度累积32次：16,384 × 32 = 524,288 tokens
-- **总计：0.5M tokens/step**
-
-#### 微调配置（相同）
-使用相同的配置以保持一致性。
-
-### 3. Epoch与Steps的关系
-
-#### 预训练（edu_fineweb10B）
-- 数据集大小：10B tokens
-- 每步处理：0.5M tokens
-- 1 epoch = 10B / 0.5M = 20,000 steps
-- 实际训练：19,073 steps（约0.95 epoch）
-
-#### 微调（Dolly-15k）
-- 数据集大小：2.8M tokens
-- 每步处理：0.5M tokens
-- 1 epoch = 2.8M / 0.5M ≈ 5-6 steps
-- 推荐训练：6 steps（1 epoch）
-
-### 4. 步数计算公式
-```
-steps_per_epoch = total_tokens / (batch_size × sequence_length × grad_accum_steps)
-```
-
-## 实际案例分析
-
-### 案例1：Dolly-15k微调
-
-**数据统计**：
-```python
-# 运行 data/prepare_dolly.py 后的输出
-Total tokens: 2,859,954
-```
-
-**精确计算**：
-- 1 epoch = 2,859,954 / 524,288 ≈ 5.46 steps
-- 取整为6 steps确保覆盖所有数据
-
-**训练配置**：
 ```bash
-python model/finetune_dolly.py \
-    --max_steps 6 \
-    --checkpoint_interval 2 \
-    --eval_interval 2
+# 准备预训练数据（FineWeb）
+python -m data_prep.fineweb
+
+# 准备微调数据（Dolly-15k）  
+python -m data_prep.prepare_dolly
 ```
 
-### 案例2：调整批次大小
+## 数据分片机制
 
-如果GPU内存有限，可以调整批次大小：
+### 分片参数
 
-**配置1：减小批次大小**
+| 数据集 | 分片大小 | 总大小 | 分片数 |
+|--------|----------|--------|--------|
+| FineWeb（预训练） | 100M tokens | 10B tokens | 100个 |
+| Dolly-15k（微调） | 10M tokens | 2.8M tokens | 1个 |
+
+### 文件命名规则
+
+- 预训练：`edufineweb_train_000000.npy`, `edufineweb_train_000001.npy`, ...
+- 微调：`dolly_train_000000.npy`, `dolly_val_000000.npy`
+
+## 训练步数计算
+
+### 关键公式
+
+```
+每步处理的 tokens = batch_size × seq_length × num_gpus × grad_accumulation_steps
+训练步数 = 总 tokens / 每步处理的 tokens
+```
+
+### 默认配置下的计算
+
+使用默认参数：
+- batch_size = 16
+- seq_length = 1024
+- grad_accumulation_steps = 32
+- 每步处理 tokens = 16 × 1024 × 1 × 32 = 524,288 (0.5M)
+
+### 快速参考
+
+| 数据集 | 总 Tokens | 1 Epoch 步数 | 建议训练 Epochs |
+|--------|-----------|--------------|-----------------|
+| FineWeb | 10B | ~20,000 | 2-3 |
+| Dolly-15k | 2.8M | ~6 | 1-2 |
+
+## 内存优化建议
+
+### GPU 内存不足时的调整策略
+
 ```bash
---batch_size 8  # 梯度累积变为64次
-```
-- 每步仍处理0.5M tokens
-- 训练时间增加（更多梯度累积）
-- 内存占用减少
+# 方案1：减小批次大小
+--batch_size 8  # 内存使用减半，训练时间翻倍
 
-**配置2：增大批次大小**
-```bash
---batch_size 32  # 梯度累积变为16次
+# 方案2：减小序列长度
+--seq_length 512  # 适用于较短文本
+
+# 方案3：使用梯度检查点
+--gradient_checkpointing  # 用计算换内存
 ```
-- 每步仍处理0.5M tokens
-- 训练时间减少
-- 需要更多GPU内存
+
+### 批次大小与梯度累积的权衡
+
+| batch_size | grad_accumulation | 内存使用 | 训练速度 |
+|------------|-------------------|----------|----------|
+| 32 | 16 | 高 | 快 |
+| 16 | 32 | 中 | 中 |
+| 8 | 64 | 低 | 慢 |
+
+## 数据加载优化
+
+### 多进程加载
+
+```bash
+# 增加数据加载进程
+--num_workers 4  # 默认为0
+
+# 预取数据
+--prefetch_factor 2  # 每个worker预取2个批次
+```
+
+### 分布式训练的数据分片
+
+分布式训练时，DataLoader 会自动：
+1. 将数据分片均匀分配给各个进程
+2. 确保每个进程看到不同的数据
+3. 在 epoch 结束时同步
 
 ## 常见问题
 
-### Q1：为什么预训练和微调使用不同的分片大小？
-**A**：预训练数据量巨大（10B tokens），使用100M分片可以：
-- 避免单个文件过大
-- 支持多进程并行读取
-- 便于分布式训练
+### Q: 如何计算特定配置下的训练时间？
 
-微调数据量小（2.8M tokens），使用10M分片即可满足需求。
-
-### Q2：如何计算训练N个epoch需要多少步？
-**A**：使用公式：
-```
-total_steps = N × (dataset_tokens / tokens_per_step)
+```python
+# 示例计算
+tokens_per_step = 16 * 1024 * 1 * 32  # 524,288
+total_tokens = 2.8e6  # Dolly数据集
+steps = total_tokens / tokens_per_step  # ~6步
+time_per_step = 30  # 秒（根据GPU）
+total_time = steps * time_per_step / 60  # ~3分钟
 ```
 
-例如，训练Dolly-15k 2个epoch：
+### Q: 如何处理不同长度的文本？
+
+1. **填充策略**：短文本填充到 seq_length
+2. **动态批处理**：相似长度的文本分组（未实现）
+3. **截断策略**：超长文本截断到 seq_length
+
+### Q: 验证集如何使用？
+
+- 如果存在 `*_val_*.npy` 文件，自动作为验证集
+- 否则使用第一个训练分片的 10% 作为验证
+- 验证频率由 `--eval_interval` 控制
+
+## 数据格式说明
+
+### 预处理后的数据格式
+
+所有数据保存为 NumPy 数组：
+- 数据类型：`np.uint16`（节省空间）
+- 形状：`(num_tokens,)`（一维数组）
+- 内容：tokenized 后的 token IDs
+
+### 自定义数据集
+
+创建自定义数据集的步骤：
+
+1. 准备文本文件
+2. 使用 tiktoken 进行 tokenization
+3. 保存为 `.npy` 格式
+4. 放入指定目录
+
+示例代码：
+```python
+import numpy as np
+import tiktoken
+
+# 初始化 tokenizer
+enc = tiktoken.get_encoding("gpt2")
+
+# 处理文本
+tokens = enc.encode("你的文本内容")
+
+# 保存
+np.save("custom_train_000000.npy", np.array(tokens, dtype=np.uint16))
 ```
-total_steps = 2 × (2.8M / 0.5M) = 2 × 5.6 ≈ 12 steps
-```
 
-### Q3：验证集如何划分？
-**A**：
-- 如果有专门的验证集文件（如`dolly_val_*.npy`），直接使用
-- 否则，使用第一个分片作为验证集（约10%的数据）
-- 对于单分片数据集，训练和验证使用相同数据（注意过拟合）
+## 相关文档
 
-### Q4：如何估算训练时间？
-**A**：基于实际测试，RTX 3090上：
-- 每步约需30-40秒
-- Dolly-15k 1 epoch（6 steps）：约3-4分钟
-- 预训练1 epoch（20k steps）：约7-10天
-
-## 最佳实践
-
-1. **数据准备**
-   - 始终检查tokenization后的总token数
-   - 确保分片大小合理（不要太大或太小）
-   - 保留原始数据用于验证
-
-2. **步数设置**
-   - 微调通常1个epoch足够
-   - 监控验证集loss避免过拟合
-   - 保存多个检查点便于选择最佳模型
-
-3. **内存优化**
-   - 调整batch_size而非total_batch_size
-   - 使用梯度累积保持有效批次大小
-   - 考虑使用混合精度训练（bfloat16）
-
-4. **分布式训练**
-   - 确保所有进程看到相同的数据顺序
-   - 合理划分数据避免重复
-   - 使用DDP时注意同步检查点
+- [训练指南](TRAINING.md) - 完整的训练流程
+- [架构说明](ARCHITECTURE.md) - 模型架构细节

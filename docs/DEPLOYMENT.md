@@ -1,123 +1,85 @@
-# 模型部署指南
+# 部署指南
 
-本文档详细介绍如何部署训练好的 nanoGPT 模型。
+## 概述
 
-## 前置要求
+本指南介绍如何部署训练好的 nano-gpt 模型。
 
-- Python 3.8+
-- PyTorch 2.0+
-- CUDA（推荐，用于 GPU 加速）
-- 训练好的模型 checkpoint 文件
+## 快速开始
 
-## 部署方式
-
-### 1. 本地推理脚本
-
-最简单的使用方式是通过 `inference.py` 脚本进行本地推理。
-
-#### 基本使用
-
-```python
-from inference import load_model_from_checkpoint, generate_text
-
-# 加载模型
-model = load_model_from_checkpoint('log/latest_checkpoint.pt')
-
-# 生成文本
-text = generate_text(
-    model,
-    prompt="Once upon a time",
-    max_length=200,
-    temperature=0.8,
-    top_k=50
-)
-print(text)
-```
-
-#### 参数说明
-
-- `checkpoint_path`: 模型 checkpoint 文件路径
-- `device`: 运行设备（'cuda' 或 'cpu'）
-- `prompt`: 输入提示词
-- `max_length`: 生成的最大 token 数量
-- `temperature`: 控制随机性（0.1-1.0，越高越随机）
-- `top_k`: Top-K 采样，只从概率最高的 K 个词中选择
-
-### 2. Flask Web API
-
-通过 `serve.py` 部署为 REST API 服务。
-
-#### 安装依赖
+### 本地部署
 
 ```bash
-pip install flask tiktoken
+# 启动 Flask 服务
+python -m web.serve
+
+# 指定模型和端口
+MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.serve
 ```
 
-#### 启动服务
+服务启动后访问 `http://localhost:5000`
 
-```bash
-# 使用默认设置
-python serve.py
+## API 接口
 
-# 自定义配置
-MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python serve.py
-```
+### POST /generate
 
-#### API 端点
+生成文本的主要接口。
 
-**POST /generate**
-
-生成文本的主要端点。
-
-请求示例：
+**请求示例：**
 ```json
 {
-    "prompt": "In the year 2050",
+    "prompt": "Once upon a time",
     "max_length": 150,
-    "temperature": 0.7,
-    "top_k": 40
+    "temperature": 0.8,
+    "top_k": 50
 }
 ```
 
-响应示例：
+**响应示例：**
 ```json
 {
-    "prompt": "In the year 2050",
-    "generated_text": "In the year 2050, the world had changed dramatically...",
+    "prompt": "Once upon a time",
+    "generated_text": "Once upon a time, there was a small village...",
     "tokens_generated": 150
 }
 ```
 
-**GET /health**
+**参数说明：**
+- `prompt`: 输入文本（必需）
+- `max_length`: 最大生成长度（默认：100）
+- `temperature`: 随机性控制，0.1-1.0（默认：0.8）
+- `top_k`: Top-K 采样（默认：50）
 
-健康检查端点。
+### GET /health
 
-响应示例：
+健康检查接口。
+
+**响应示例：**
 ```json
 {
     "status": "healthy",
+    "model_loaded": true,
     "device": "cuda"
 }
 ```
 
-### 3. 生产环境部署
+## 生产部署
 
-#### 使用 Gunicorn
+### 使用 Gunicorn
 
-安装 Gunicorn：
 ```bash
+# 安装 Gunicorn
 pip install gunicorn
+
+# 启动服务（4个工作进程）
+gunicorn -w 4 -b 0.0.0.0:5000 web.serve:app
+
+# 带超时设置
+gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 web.serve:app
 ```
 
-启动服务：
-```bash
-gunicorn -w 4 -b 0.0.0.0:5000 serve:app
-```
+### Docker 部署
 
-#### Docker 部署
-
-创建 `Dockerfile`：
-
+**Dockerfile:**
 ```dockerfile
 FROM pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
 
@@ -127,310 +89,207 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# 复制代码和模型
-COPY *.py ./
+# 复制代码
+COPY model/ ./model/
+COPY web/ ./web/
+COPY eval/ ./eval/
+
+# 复制模型文件
 COPY log/ ./log/
 
 # 暴露端口
 EXPOSE 5000
 
 # 启动服务
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5000", "serve:app"]
+CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5000", "web.serve:app"]
 ```
 
-创建 `requirements.txt`：
-```
-torch>=2.0.0
-tiktoken
-flask
-gunicorn
-numpy
-```
-
-构建和运行：
+**构建和运行：**
 ```bash
 # 构建镜像
-docker build -t nanogpt-api .
+docker build -t nano-gpt-api .
 
 # 运行容器
-docker run -p 5000:5000 --gpus all nanogpt-api
+docker run -p 5000:5000 --gpus all nano-gpt-api
+
+# 使用环境变量
+docker run -p 5000:5000 --gpus all \
+    -e MODEL_CHECKPOINT=/app/log/model_40000.pt \
+    nano-gpt-api
 ```
 
-#### Kubernetes 部署
+### 使用 Nginx 反向代理
 
-创建 `deployment.yaml`：
+**nginx.conf:**
+```nginx
+upstream app {
+    server localhost:5000;
+}
 
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nanogpt-api
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: nanogpt-api
-  template:
-    metadata:
-      labels:
-        app: nanogpt-api
-    spec:
-      containers:
-      - name: nanogpt-api
-        image: nanogpt-api:latest
-        ports:
-        - containerPort: 5000
-        resources:
-          requests:
-            memory: "4Gi"
-            nvidia.com/gpu: 1
-          limits:
-            memory: "8Gi"
-            nvidia.com/gpu: 1
-        env:
-        - name: MODEL_CHECKPOINT
-          value: "/model/checkpoint.pt"
-        volumeMounts:
-        - name: model-volume
-          mountPath: /model
-      volumes:
-      - name: model-volume
-        persistentVolumeClaim:
-          claimName: model-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nanogpt-service
-spec:
-  selector:
-    app: nanogpt-api
-  ports:
-  - port: 80
-    targetPort: 5000
-  type: LoadBalancer
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location / {
+        proxy_pass http://app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 300s;
+    }
+}
 ```
 
-### 4. 性能优化
+## 性能优化
 
-#### 批处理
-
-修改 `serve.py` 支持批量请求：
+### 1. 模型加载优化
 
 ```python
-@app.route('/batch_generate', methods=['POST'])
-def batch_generate():
-    """批量生成文本"""
-    data = request.json
-    prompts = data.get('prompts', [])
-    
-    # 批量处理
-    results = []
-    for prompt in prompts:
-        # 这里可以优化为真正的批处理
-        result = generate_single(prompt, **data.get('params', {}))
-        results.append(result)
-    
-    return jsonify({'results': results})
+# 在 web/serve.py 中预加载模型
+model = load_model_from_checkpoint(checkpoint_path)
+model.eval()  # 设置为评估模式
 ```
 
-#### 缓存
+### 2. 批处理请求
 
-使用 Redis 缓存常见请求：
+对于高并发场景，可以实现请求批处理：
 
 ```python
+# 累积多个请求
+batch_prompts = ["prompt1", "prompt2", "prompt3"]
+# 批量生成
+results = batch_generate(model, batch_prompts)
+```
+
+### 3. 缓存常见请求
+
+使用 Redis 缓存：
+
+```bash
+# 安装 Redis
+pip install redis
+
+# 在代码中使用缓存
 import redis
-import hashlib
-import json
-
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
-
-def get_cache_key(prompt, params):
-    """生成缓存键"""
-    content = f"{prompt}:{json.dumps(params, sort_keys=True)}"
-    return hashlib.md5(content.encode()).hexdigest()
-
-def generate_with_cache(prompt, **params):
-    """带缓存的生成函数"""
-    cache_key = get_cache_key(prompt, params)
-    
-    # 尝试从缓存获取
-    cached = redis_client.get(cache_key)
-    if cached:
-        return json.loads(cached)
-    
-    # 生成新结果
-    result = generate_text(model, prompt, **params)
-    
-    # 存入缓存（1小时过期）
-    redis_client.setex(cache_key, 3600, json.dumps(result))
-    
-    return result
+cache = redis.Redis(host='localhost', port=6379)
 ```
 
-### 5. 监控和日志
+## 监控和日志
 
-#### 添加日志
+### 基础日志
 
 ```python
 import logging
-from flask import Flask, request, jsonify
-import time
 
-# 配置日志
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+```
 
+### 请求追踪
+
+```python
 @app.before_request
 def log_request():
-    """记录请求信息"""
-    request.start_time = time.time()
     logger.info(f"Request: {request.method} {request.path}")
 
-@app.after_request
+@app.after_request  
 def log_response(response):
-    """记录响应信息"""
-    duration = time.time() - request.start_time
-    logger.info(f"Response: {response.status_code} ({duration:.3f}s)")
+    logger.info(f"Response: {response.status_code}")
     return response
 ```
 
-#### Prometheus 监控
+## 安全建议
+
+### 1. API 密钥认证
 
 ```python
-from prometheus_client import Counter, Histogram, generate_latest
+API_KEY = os.environ.get('API_KEY')
 
-# 定义指标
-request_count = Counter('api_requests_total', 'Total API requests', ['endpoint', 'method'])
-request_duration = Histogram('api_request_duration_seconds', 'API request duration')
-generation_tokens = Counter('generated_tokens_total', 'Total generated tokens')
-
-@app.route('/metrics')
-def metrics():
-    """Prometheus 指标端点"""
-    return generate_latest()
+@app.before_request
+def check_api_key():
+    if request.headers.get('X-API-Key') != API_KEY:
+        return jsonify({'error': 'Invalid API key'}), 401
 ```
 
-### 6. 安全建议
+### 2. 请求限流
 
-1. **API 认证**
-```python
-from functools import wraps
+```bash
+# 安装限流库
+pip install flask-limiter
 
-def require_api_key(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key')
-        if not api_key or api_key != os.environ.get('API_KEY'):
-            return jsonify({'error': 'Invalid API key'}), 401
-        return f(*args, **kwargs)
-    return decorated_function
-
-@app.route('/generate', methods=['POST'])
-@require_api_key
-def generate():
-    # ... 原有代码
-```
-
-2. **请求限流**
-```python
+# 使用限流
 from flask_limiter import Limiter
-
-limiter = Limiter(
-    app,
-    key_func=lambda: request.headers.get('X-API-Key', 'anonymous'),
-    default_limits=["100 per hour"]
-)
+limiter = Limiter(app, key_func=lambda: request.remote_addr)
 
 @app.route('/generate', methods=['POST'])
 @limiter.limit("10 per minute")
 def generate():
-    # ... 原有代码
+    # 处理请求
 ```
 
-3. **输入验证**
+### 3. 输入验证
+
 ```python
-def validate_generate_request(data):
-    """验证生成请求参数"""
+def validate_request(data):
     if not data.get('prompt'):
         return False, "Prompt is required"
     
-    max_length = data.get('max_length', 100)
-    if max_length > 1000:
-        return False, "max_length cannot exceed 1000"
-    
-    temperature = data.get('temperature', 0.8)
-    if not 0.1 <= temperature <= 1.0:
-        return False, "temperature must be between 0.1 and 1.0"
-    
+    if len(data['prompt']) > 1000:
+        return False, "Prompt too long"
+        
+    if data.get('max_length', 100) > 500:
+        return False, "max_length too large"
+        
     return True, None
 ```
 
-## 故障排除
+## 故障排查
 
 ### 常见问题
 
-1. **内存不足**
-   - 降低批处理大小
-   - 使用量化技术
-   - 增加交换空间
+1. **GPU 不可用**
+   ```bash
+   # 检查 CUDA
+   python -c "import torch; print(torch.cuda.is_available())"
+   ```
 
-2. **GPU 不可用**
-   - 检查 CUDA 安装
-   - 确认 PyTorch GPU 版本
-   - 检查 nvidia-smi 输出
+2. **内存不足**
+   - 使用更小的模型
+   - 减少并发工作进程数
+   - 启用模型量化
 
-3. **生成质量差**
-   - 检查 checkpoint 是否正确加载
-   - 调整 temperature 和 top_k 参数
-   - 确认使用了正确的 tokenizer
+3. **响应超时**
+   - 增加 Gunicorn 超时时间
+   - 减小 max_length 参数
+   - 使用异步处理
 
-### 性能调优
+### 性能监控
 
-1. **使用 TorchScript**
-```python
-# 导出模型
-scripted_model = torch.jit.script(model)
-torch.jit.save(scripted_model, "model_scripted.pt")
+```bash
+# CPU 和内存使用
+htop
 
-# 加载使用
-model = torch.jit.load("model_scripted.pt")
+# GPU 使用
+nvidia-smi -l 1
+
+# 网络连接
+netstat -an | grep 5000
 ```
 
-2. **使用 ONNX**
-```python
-# 导出到 ONNX
-torch.onnx.export(
-    model,
-    dummy_input,
-    "model.onnx",
-    opset_version=11,
-    do_constant_folding=True
-)
-```
+## 部署清单
 
-3. **使用 TensorRT（NVIDIA GPU）**
-```python
-import torch_tensorrt
+- [ ] 选择合适的硬件（GPU 推荐）
+- [ ] 安装必要的依赖
+- [ ] 配置环境变量
+- [ ] 设置日志和监控
+- [ ] 配置反向代理
+- [ ] 实施安全措施
+- [ ] 进行负载测试
+- [ ] 准备回滚方案
 
-# 编译模型
-trt_model = torch_tensorrt.compile(
-    model,
-    inputs=[torch_tensorrt.Input(shape=[1, 512])],
-    enabled_precisions={torch.float, torch.half}
-)
-```
+## 相关文档
 
-## 总结
-
-本指南涵盖了从简单的本地推理到生产级部署的各种方案。根据你的具体需求选择合适的部署方式：
-
-- **开发测试**：使用 inference.py 脚本
-- **小规模服务**：使用 Flask + Gunicorn
-- **生产环境**：使用 Docker/Kubernetes + 监控 + 缓存
-- **高性能场景**：使用模型优化技术（量化、TensorRT 等）
-
-记得根据实际负载调整配置，并做好监控和日志记录。
+- [训练指南](TRAINING.md) - 模型训练
+- [API 参考](API_REFERENCE.md) - 详细 API 文档
+- [故障排查](TROUBLESHOOTING.md) - 更多问题解决

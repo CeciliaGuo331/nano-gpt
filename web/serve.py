@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import torch
 import tiktoken
-from model import GPT
+from ..model.train_gpt2 import GPT
 import os
 
 app = Flask(__name__)
