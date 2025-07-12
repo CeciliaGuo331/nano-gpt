@@ -20,7 +20,7 @@ def test_generation(model_path, temperature=0.8, top_k=40):
     print(f"生成参数: temperature={temperature}, top_k={top_k}")
     
     model = GPT(GPTConfig(vocab_size=50304))
-    checkpoint = torch.load(model_path, map_location=device)
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)  # 添加weights_only=False
     
     # 处理不同的checkpoint格式
     if "model" in checkpoint:
