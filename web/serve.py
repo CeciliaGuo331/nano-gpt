@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 import torch
 import tiktoken
-from ..model.train_gpt2 import GPT
+from model.train_gpt2 import GPT
 import os
 
 app = Flask(__name__)
@@ -16,10 +16,10 @@ def load_model():
     global model, enc, device
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    checkpoint_path = os.environ.get('MODEL_CHECKPOINT', 'log/latest_checkpoint.pt')
+    checkpoint_path = os.environ.get('MODEL_CHECKPOINT', 'logs_finetune/latest_checkpoint.pt')
     
     # 加载 checkpoint
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only = False)
     config = checkpoint['config']
     
     # 创建并加载模型
