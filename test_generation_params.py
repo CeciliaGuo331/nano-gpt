@@ -3,12 +3,16 @@
 """
 
 import os
+import sys
 import torch
 import tiktoken
 
-# 直接导入train_gpt2作为模块，让Python识别这个名称
-import model.train_gpt2
-from model.train_gpt2 import GPT, GPTConfig
+# 将model目录添加到Python路径，这样train_gpt2可以被找到
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model'))
+
+# 现在可以直接导入train_gpt2
+import train_gpt2
+from train_gpt2 import GPT, GPTConfig
 
 def test_generation(model_path, temperature=0.8, top_k=40):
     """测试模型生成质量"""
