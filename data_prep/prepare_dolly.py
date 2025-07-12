@@ -58,10 +58,9 @@ def tokenize(sample):
     # Format the sample
     text = format_dolly_sample(sample)
     
-    # Tokenize with proper delimiters
-    tokens = [eot]  # Start with <|endoftext|>
-    tokens.extend(enc.encode_ordinary(text))
-    tokens.append(eot)  # End with <|endoftext|> to properly separate samples
+    # Tokenize without starting <|endoftext|> for cleaner instruction following
+    tokens = enc.encode_ordinary(text)
+    tokens.append(eot)  # Only add <|endoftext|> at the end to mark completion
     
     tokens_np = np.array(tokens)
     assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), "token dictionary too large for uint16"
