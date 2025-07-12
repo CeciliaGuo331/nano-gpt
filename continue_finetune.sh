@@ -11,7 +11,6 @@ python -m model.finetune_dolly \
     --warmup_steps 1 \
     --checkpoint_interval 1 \
     --eval_interval 1 \
-    --generate_interval 1 \
-    --log_dir logs_finetune_continued
+    --generate_interval 1
 
 echo "微调完成！"
