@@ -319,13 +319,13 @@ def main():
     parser.add_argument(
         "--max_lr",
         type=float,
-        default=6e-5,
+        default=6e-6,  # 降低10倍，从6e-5到6e-6
         help="Maximum learning rate",
     )
     parser.add_argument(
         "--warmup_steps",
         type=int,
-        default=1,
+        default=3,  # 增加warmup步数
         help="Number of warmup steps",
     )
     parser.add_argument(
@@ -588,6 +588,11 @@ def main():
                 
                 probs = torch.nn.functional.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
+                
+                # 检查是否遇到结束标记
+                if next_token.item() == 50256:  # <|endoftext|> token
+                    break
+                    
                 xgen = torch.cat((xgen, next_token), dim=1)
             
             if master_process:

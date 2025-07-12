@@ -7,7 +7,7 @@ hellaswag/
 dolly15k/
 git_chore.sh
 
-docs/1.txt
+docs/*.txt
 
 log_backup/
 log/
