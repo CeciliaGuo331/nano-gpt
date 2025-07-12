@@ -11,5 +11,3 @@ docs/*.txt
 
 log_backup/
 log/
-
-*.pt
