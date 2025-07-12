@@ -8,6 +8,3 @@ dolly15k/
 git_chore.sh
 
 docs/*.txt
-
-log_backup/
-log/
