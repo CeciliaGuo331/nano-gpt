@@ -3,8 +3,15 @@
 """
 
 import os
+import sys
 import torch
 import tiktoken
+
+# 添加项目根目录到Python路径
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# 使用相同的导入方式，确保与checkpoint中的模块名匹配
+from model import train_gpt2
 from model.train_gpt2 import GPT, GPTConfig
 
 def test_generation(model_path, temperature=0.8, top_k=40):
