@@ -277,7 +277,7 @@ def main():
     parser.add_argument(
         "--checkpoint_interval",
         type=int,
-        default=2,
+        default=-1,
         help="Save checkpoint every N steps",
     )
     parser.add_argument(
@@ -289,7 +289,7 @@ def main():
     parser.add_argument(
         "--eval_interval",
         type=int,
-        default=2,
+        default=-1,  # -1表示每步都评估
         help="Evaluate validation loss every N steps",
     )
     parser.add_argument(
@@ -319,20 +319,20 @@ def main():
     parser.add_argument(
         "--max_lr",
         type=float,
-        default=6e-6,  # 降低10倍，从6e-5到6e-6
+        default=1e-6,  # 从6e-6降到1e-6，更保守的学习率
         help="Maximum learning rate",
     )
     parser.add_argument(
         "--warmup_steps",
         type=int,
-        default=3,  # 增加warmup步数
+        default=1,  # 增加warmup步数
         help="Number of warmup steps",
     )
     parser.add_argument(
         "--max_steps",
         type=int,
-        default=6,
-        help="Maximum number of training steps (default: ~1 epoch for Dolly-15k)",
+        default=3,  # 只训练3步，约0.6个epoch，避免过拟合
+        help="Maximum number of training steps (default: ~0.6 epoch for Dolly-15k)",
     )
     args = parser.parse_args()
 
