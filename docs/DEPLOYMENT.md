@@ -1,9 +1,5 @@
 # 部署指南
 
-## 概述
-
-本指南介绍如何部署训练好的 nano-gpt 模型。
-
 ## 快速开始
 
 ### 本地部署
@@ -22,41 +18,49 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
 
 ### POST /generate
 
-生成文本的主要接口。
+文本生成接口。
 
-**请求示例：**
+**请求 Body 参数**
+
+| 参数          | 类型      | 是否必需 | 默认值 | 描述                                                |
+| :------------ | :-------- | :------- | :----- | :-------------------------------------------------- |
+| `prompt`      | `string`  | **是**   | `''`   | 作为生成起点的提示文本。                            |
+| `max_length`  | `integer` | 否       | `100`  | 要生成的最大 token 数量。                           |
+| `temperature` | `float`   | 否       | `0.8`  | 控制生成文本的随机性。值越高，随机性越强。          |
+| `top_k`       | `integer` | 否       | `50`   | 在每一步生成时，只从概率最高的 `k` 个词中进行采样。 |
+
+**示例命令**
+
+```bash
+curl -X POST http://localhost:5000/generate \
+     -H "Content-Type: application/json" \
+     -d '{
+           "prompt": "Hello, world",
+           "max_length": 50
+         }'
+```
+
+**响应示例**
 
 ```json
 {
-  "prompt": "Once upon a time",
-  "max_length": 150,
-  "temperature": 0.8,
-  "top_k": 50
+  "prompt": "Hello, world",
+  "generated_text": "Hello, world, for the world, where is the world? ...",
+  "tokens_generated": 50
 }
 ```
-
-**响应示例：**
-
-```json
-{
-  "prompt": "Once upon a time",
-  "generated_text": "Once upon a time, there was a small village...",
-  "tokens_generated": 150
-}
-```
-
-**参数说明：**
-
-- `prompt`: 输入文本（必需）
-- `max_length`: 最大生成长度（默认：100）
-- `temperature`: 随机性控制，0.1-1.0（默认：0.8）
-- `top_k`: Top-K 采样（默认：50）
 
 ### GET /health
 
 健康检查接口。
 
-**响应示例：**
+**示例命令**
+
+```bash
+curl http://localhost:5000/health
+```
+
+**响应示例**
 
 ```json
 {
@@ -66,6 +70,7 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
 }
 ```
 
+<!--
 ## 生产部署
 
 ### 使用 Gunicorn
@@ -249,50 +254,4 @@ def validate_request(data):
         return False, "max_length too large"
 
     return True, None
-```
-
-## 故障排查
-
-### 常见问题
-
-1. **GPU 不可用**
-
-   ```bash
-   # 检查 CUDA
-   python -c "import torch; print(torch.cuda.is_available())"
-   ```
-
-2. **内存不足**
-
-   - 使用更小的模型
-   - 减少并发工作进程数
-   - 启用模型量化
-
-3. **响应超时**
-   - 增加 Gunicorn 超时时间
-   - 减小 max_length 参数
-   - 使用异步处理
-
-### 性能监控
-
-```bash
-# CPU 和内存使用
-htop
-
-# GPU 使用
-nvidia-smi -l 1
-
-# 网络连接
-netstat -an | grep 5000
-```
-
-## 部署清单
-
-- [ ] 选择合适的硬件（GPU 推荐）
-- [ ] 安装必要的依赖
-- [ ] 配置环境变量
-- [ ] 设置日志和监控
-- [ ] 配置反向代理
-- [ ] 实施安全措施
-- [ ] 进行负载测试
-- [ ] 准备回滚方案
+``` -->
