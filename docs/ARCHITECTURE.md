@@ -9,7 +9,7 @@ graph TB
     end
     
     subgraph "服务层"
-        B[Flask API<br/>serve.py]
+        B[Flask API<br/>app.py]
     end
     
     subgraph "推理层"
@@ -86,7 +86,7 @@ nano-gpt/
 │   ├── fineweb.py         # 预训练数据处理
 │   └── prepare_dolly.py   # 微调数据处理(待实现)
 ├── platform/
-│   ├── serve.py           # Flask API服务
+│   ├── app.py           # Flask API服务
 │   └── inference.py       # 推理接口
 ├── eval/
 │   └── hellaswag.py       # 模型评估

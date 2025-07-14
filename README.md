@@ -49,7 +49,7 @@ python -m model.train_gpt2
 python -m model.finetune_dolly --pretrained_checkpoint log/model_40000.pt
 
 # 4. 启动服务
-python -m web.serve
+python -m web.app
 ```
 
 ## 📚 文档

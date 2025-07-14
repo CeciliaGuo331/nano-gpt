@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nano-GPT 交互界面</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Nano-GPT 指令微调模型</h1>
+            <p class="subtitle">一个基于 Karpathy 教程复现并微调的入门级指令助手</p>
+        </header>
+
+        <main>
+            <div class="input-section">
+                <label for="prompt-input">输入你的指令:</label>
+                <textarea id="prompt-input" rows="5" placeholder="例如：写一首关于夏夜的五言绝句"></textarea>
+                
+                <div class="controls">
+                    <label for="max-length-slider">最大生成长度: <span id="max-length-value">100</span></label>
+                    <input type="range" id="max-length-slider" min="10" max="512" value="100">
+                </div>
+
+                <button id="generate-btn">生成文本</button>
+            </div>
+
+            <div class="output-section">
+                <h2>生成结果</h2>
+                <div id="loader" class="loader" style="display: none;"></div>
+                <pre id="result-output">模型生成的结果将显示在这里...</pre>
+            </div>
+        </main>
+        
+        <footer>
+            <p>灵感来源于 Andrej Karpathy 的 "Let's build GPT" 教程</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

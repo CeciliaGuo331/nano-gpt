@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template 
 import torch
 import tiktoken
 from model.train_gpt2 import GPT
@@ -82,10 +82,14 @@ def health():
     """健康检查端点"""
     return jsonify({'status': 'healthy', 'device': device})
 
+@app.route("/")
+def hello():
+    return render_template('index.html') 
+
 if __name__ == '__main__':
     # 启动时加载模型
     load_model()
     
     # 启动服务
     port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug = True)

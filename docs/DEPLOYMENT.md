@@ -10,10 +10,10 @@
 
 ```bash
 # 启动 Flask 服务
-python -m web.serve
+python -m web.app
 
 # 指定模型和端口
-MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.serve
+MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
 ```
 
 服务启动后访问 `http://localhost:5000`
@@ -25,25 +25,28 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.serve
 生成文本的主要接口。
 
 **请求示例：**
+
 ```json
 {
-    "prompt": "Once upon a time",
-    "max_length": 150,
-    "temperature": 0.8,
-    "top_k": 50
+  "prompt": "Once upon a time",
+  "max_length": 150,
+  "temperature": 0.8,
+  "top_k": 50
 }
 ```
 
 **响应示例：**
+
 ```json
 {
-    "prompt": "Once upon a time",
-    "generated_text": "Once upon a time, there was a small village...",
-    "tokens_generated": 150
+  "prompt": "Once upon a time",
+  "generated_text": "Once upon a time, there was a small village...",
+  "tokens_generated": 150
 }
 ```
 
 **参数说明：**
+
 - `prompt`: 输入文本（必需）
 - `max_length`: 最大生成长度（默认：100）
 - `temperature`: 随机性控制，0.1-1.0（默认：0.8）
@@ -54,11 +57,12 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.serve
 健康检查接口。
 
 **响应示例：**
+
 ```json
 {
-    "status": "healthy",
-    "model_loaded": true,
-    "device": "cuda"
+  "status": "healthy",
+  "model_loaded": true,
+  "device": "cuda"
 }
 ```
 
@@ -71,15 +75,16 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.serve
 pip install gunicorn
 
 # 启动服务（4个工作进程）
-gunicorn -w 4 -b 0.0.0.0:5000 web.serve:app
+gunicorn -w 4 -b 0.0.0.0:5000 web.app:app
 
 # 带超时设置
-gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 web.serve:app
+gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 web.app:app
 ```
 
 ### Docker 部署
 
 **Dockerfile:**
+
 ```dockerfile
 FROM pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
 
@@ -105,6 +110,7 @@ CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5000", "web.serve:app"]
 ```
 
 **构建和运行：**
+
 ```bash
 # 构建镜像
 docker build -t nano-gpt-api .
@@ -121,6 +127,7 @@ docker run -p 5000:5000 --gpus all \
 ### 使用 Nginx 反向代理
 
 **nginx.conf:**
+
 ```nginx
 upstream app {
     server localhost:5000;
@@ -144,7 +151,7 @@ server {
 ### 1. 模型加载优化
 
 ```python
-# 在 web/serve.py 中预加载模型
+# 在 web/app.py 中预加载模型
 model = load_model_from_checkpoint(checkpoint_path)
 model.eval()  # 设置为评估模式
 ```
@@ -193,7 +200,7 @@ logging.basicConfig(
 def log_request():
     logger.info(f"Request: {request.method} {request.path}")
 
-@app.after_request  
+@app.after_request
 def log_response(response):
     logger.info(f"Response: {response.status_code}")
     return response
@@ -234,13 +241,13 @@ def generate():
 def validate_request(data):
     if not data.get('prompt'):
         return False, "Prompt is required"
-    
+
     if len(data['prompt']) > 1000:
         return False, "Prompt too long"
-        
+
     if data.get('max_length', 100) > 500:
         return False, "max_length too large"
-        
+
     return True, None
 ```
 
@@ -249,12 +256,14 @@ def validate_request(data):
 ### 常见问题
 
 1. **GPU 不可用**
+
    ```bash
    # 检查 CUDA
    python -c "import torch; print(torch.cuda.is_available())"
    ```
 
 2. **内存不足**
+
    - 使用更小的模型
    - 减少并发工作进程数
    - 启用模型量化
@@ -287,9 +296,3 @@ netstat -an | grep 5000
 - [ ] 实施安全措施
 - [ ] 进行负载测试
 - [ ] 准备回滚方案
-
-## 相关文档
-
-- [训练指南](TRAINING.md) - 模型训练
-- [API 参考](API_REFERENCE.md) - 详细 API 文档
-- [故障排查](TROUBLESHOOTING.md) - 更多问题解决
