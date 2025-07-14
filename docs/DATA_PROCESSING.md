@@ -1,7 +1,5 @@
 # 数据处理指南
 
-## 概述
-
 本文档说明 nano-gpt 的数据处理流程和关键参数计算方法。
 
 ## 数据准备
@@ -12,7 +10,7 @@
 # 准备预训练数据（FineWeb）
 python -m data_prep.fineweb
 
-# 准备微调数据（Dolly-15k）  
+# 准备微调数据（Dolly-15k）
 python -m data_prep.prepare_dolly
 ```
 
@@ -20,10 +18,10 @@ python -m data_prep.prepare_dolly
 
 ### 分片参数
 
-| 数据集 | 分片大小 | 总大小 | 分片数 |
-|--------|----------|--------|--------|
-| FineWeb（预训练） | 100M tokens | 10B tokens | 100个 |
-| Dolly-15k（微调） | 10M tokens | 2.8M tokens | 1个 |
+| 数据集            | 分片大小    | 总大小      | 分片数 |
+| ----------------- | ----------- | ----------- | ------ |
+| FineWeb（预训练） | 100M tokens | 10B tokens  | 100 个 |
+| Dolly-15k（微调） | 10M tokens  | 2.8M tokens | 1 个   |
 
 ### 文件命名规则
 
@@ -42,6 +40,7 @@ python -m data_prep.prepare_dolly
 ### 默认配置下的计算
 
 使用默认参数：
+
 - batch_size = 16
 - seq_length = 1024
 - grad_accumulation_steps = 32
@@ -49,10 +48,10 @@ python -m data_prep.prepare_dolly
 
 ### 快速参考
 
-| 数据集 | 总 Tokens | 1 Epoch 步数 | 建议训练 Epochs |
-|--------|-----------|--------------|-----------------|
-| FineWeb | 10B | ~20,000 | 2-3 |
-| Dolly-15k | 2.8M | ~6 | 1-2 |
+| 数据集    | 总 Tokens | 1 Epoch 步数 | 建议训练 Epochs |
+| --------- | --------- | ------------ | --------------- |
+| FineWeb   | 10B       | ~20,000      | 2-3             |
+| Dolly-15k | 2.8M      | ~6           | 1-2             |
 
 ## 内存优化建议
 
@@ -72,10 +71,10 @@ python -m data_prep.prepare_dolly
 ### 批次大小与梯度累积的权衡
 
 | batch_size | grad_accumulation | 内存使用 | 训练速度 |
-|------------|-------------------|----------|----------|
-| 32 | 16 | 高 | 快 |
-| 16 | 32 | 中 | 中 |
-| 8 | 64 | 低 | 慢 |
+| ---------- | ----------------- | -------- | -------- |
+| 32         | 16                | 高       | 快       |
+| 16         | 32                | 中       | 中       |
+| 8          | 64                | 低       | 慢       |
 
 ## 数据加载优化
 
@@ -92,6 +91,7 @@ python -m data_prep.prepare_dolly
 ### 分布式训练的数据分片
 
 分布式训练时，DataLoader 会自动：
+
 1. 将数据分片均匀分配给各个进程
 2. 确保每个进程看到不同的数据
 3. 在 epoch 结束时同步
@@ -126,6 +126,7 @@ total_time = steps * time_per_step / 60  # ~3分钟
 ### 预处理后的数据格式
 
 所有数据保存为 NumPy 数组：
+
 - 数据类型：`np.uint16`（节省空间）
 - 形状：`(num_tokens,)`（一维数组）
 - 内容：tokenized 后的 token IDs
@@ -140,6 +141,7 @@ total_time = steps * time_per_step / 60  # ~3分钟
 4. 放入指定目录
 
 示例代码：
+
 ```python
 import numpy as np
 import tiktoken

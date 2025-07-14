@@ -1,5 +1,40 @@
-# nano-gpt
+# nano-gpt: 从随机权重到指令遵循
 
+## 项目简介
+
+本项目以 [build-nanogpt](https://github.com/karpathy/build-nanogpt) 中实现的基于 PyTorch 框架的 GPT-2 架构为起点，进行预训练，并在此基础上使用 dolly 数据集和手工编写的小规模数据集进行微调，最终实现了一个有初步指令遵循能力的智能助手原型。
+
+## 项目亮点
+
+## 模型架构
+
+## 训练流程
+
+### 阶段一：基础预训练 (Pre-training)
+
+### 阶段二：指令微调 (Instruction Fine-tuning)
+
+## 性能评估
+
+## 部署与应用
+
+## 快速开始
+
+### 1. 环境设置
+
+### 2. 数据准备
+
+### 3. 模型训练与微调
+
+### 4. 启动 Web 应用
+
+## 项目文件结构
+
+## 展望
+
+## 致谢
+
+<!--
 基于 GPT-2 架构的教育性语言模型实现，支持预训练、指令微调和 Web 部署。
 
 ## ✨ 特性
@@ -84,4 +119,4 @@ MIT License
 ## 🙏 致谢
 
 - 受 [Andrej Karpathy](https://github.com/karpathy) 的 build-nanogpt 项目启发
-- 使用 [Databricks Dolly](https://www.databricks.com/blog/2023/04/12/dolly-first-open-commercially-viable-instruction-tuned-llm) 数据集进行微调
+- 使用 [Databricks Dolly](https://www.databricks.com/blog/2023/04/12/dolly-first-open-commercially-viable-instruction-tuned-llm) 数据集进行微调 -->
