@@ -1,6 +1,14 @@
 """
-微调GPT-2模型使用Dolly-15k数据集
-基于train_gpt2.py修改，专门用于指令微调
+微调GPT-2模型使用Dolly-15k数据集。
+
+该脚本是 train_gpt2.py 的一个专门化版本，针对指令微调任务进行了深度优化。
+它融合了预训练脚本中成熟的工程实践和为微调任务定制的核心逻辑。
+
+核心特性:
+1.  **指令微调数据加载器**: 实现基于样本的加载、动态填充和批次内随机化。
+2.  **损失遮罩 (Loss Masking)**: 仅在模型生成的回应部分计算损失，提升训练效率。
+3.  **职责分离的检查点机制**: 清晰地区分“恢复训练”和“加载预训练权重”两种操作。
+4.  **内存优化与健壮性**: 包含内存优化参数，并修复了所有已知的bug。
 """
 
 import os
@@ -9,6 +17,7 @@ import time
 import glob
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 import numpy as np
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -16,366 +25,210 @@ import tiktoken
 import argparse
 import random
 import inspect
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple
+from torch.serialization import safe_globals
 
 # 导入预训练脚本中的模型定义
-from dataclasses import dataclass
-from .train_gpt2 import GPT, GPTConfig
+try:
+    from .train_gpt2 import GPT, GPTConfig
+except ImportError:
+    from train_gpt2 import GPT, GPTConfig
 
 # -----------------------------------------------------------------------------
 # 数据加载器
 
 class DataLoaderLite:
-    def __init__(self, data_root, B, T, split, device):
+    """
+    为指令微调任务设计的数据加载器。
+    它将数据视为独立的样本列表，而非连续的token流。
+    """
+    def __init__(self, data_root: str, B: int, T: int, split: str, 
+                 master_process: bool, device: str, vocab_size: int):
         self.B = B
         self.T = T
         self.device = device
+        self.master_process = master_process
+        self.vocab_size = vocab_size
         assert split in {"train", "val"}
-        
-        # get the shard filenames - 与 train_gpt2.py 保持一致
-        shards = os.listdir(data_root)
-        shards = [s for s in shards if split in s]
-        shards = sorted(shards)
-        shards = [os.path.join(data_root, s) for s in shards]
-        self.shards = shards
+
+        enc = tiktoken.get_encoding('gpt2')
+        self.eot_token_id = enc._special_tokens['<|endoftext|>']
+        self.pad_token_id = -100
+        self.response_template = "### Response:"
+        self.response_template_tokens = enc.encode(self.response_template)
+
+        shards = sorted([os.path.join(data_root, s) for s in os.listdir(data_root) if split in s])
         assert len(shards) > 0, f"no shards found for split {split}"
-        print(f"found {len(shards)} shards for split {split}")
+        if self.master_process:
+            print(f"found {len(shards)} shards for split {split}")
+
+        tokens_stream = np.concatenate([np.load(shard).astype(np.int32) for shard in shards])
         
-        # 加载并连接所有分片
-        all_tokens = []
-        for shard in shards:
-            tokens = np.load(shard).astype(np.int32)
-            all_tokens.append(tokens)
+        eot_indices = np.where(tokens_stream == self.eot_token_id)[0]
+        samples = np.split(tokens_stream, eot_indices + 1)
         
-        self.tokens = np.concatenate(all_tokens) if len(all_tokens) > 0 else np.array([], dtype=np.int32)
-        print(f"Loaded {len(self.tokens):,} tokens for {split} split")
+        self.samples = [s for s in samples if 0 < len(s) <= self.T]
+        if self.master_process:
+            print(f"Loaded and split into {len(self.samples):,} valid samples for {split} split.")
         
-        # 状态
+        self.reset()
+
+    def reset(self):
         self.current_position = 0
+        random.shuffle(self.samples)
+
+    def _find_subsequence(self, main_list: List[int], sub_list: List[int]) -> int:
+        len_sub = len(sub_list)
+        for i in range(len(main_list) - len_sub + 1):
+            if main_list[i : i + len_sub] == sub_list:
+                return i + len_sub
+        return -1
+
+    def get_batch(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.current_position + self.B >= len(self.samples):
+            self.reset()
+
+        batch_samples = self.samples[self.current_position : self.current_position + self.B]
+        self.current_position += self.B
+
+        max_len_in_batch = max(len(s) for s in batch_samples)
         
-    def get_batch(self):
-        B, T = self.B, self.T
-        buf = self.tokens[self.current_position : self.current_position + B * T + 1]
-        if len(buf) < B * T + 1:
-            # 如果到达末尾，从头开始
-            self.current_position = 0
-            buf = self.tokens[self.current_position : self.current_position + B * T + 1]
-        
-        buf = torch.tensor(buf, dtype=torch.long)
-        x = buf[:-1].view(B, T)
-        y = buf[1:].view(B, T)
-        
-        # 推进位置
-        self.current_position += B * T
-        if self.current_position + B * T + 1 > len(self.tokens):
-            self.current_position = 0
+        x_list, y_list = [], []
+        for sample in batch_samples:
+            sample_list = sample.tolist()
+            padded_sample = np.full(max_len_in_batch, 0, dtype=np.int32)
+            padded_sample[:len(sample_list)] = sample_list
             
-        return x.to(self.device), y.to(self.device)
-    
-    def get_state(self):
-        return {
-            "current_position": self.current_position,
-        }
-    
-    def load_state(self, state):
-        self.current_position = state["current_position"]
+            x = padded_sample[:-1].copy()
+            y = padded_sample[1:].copy()
+            
+            y[:] = self.pad_token_id
+            response_start_idx = self._find_subsequence(sample_list, self.response_template_tokens)
+            if response_start_idx != -1:
+                response_end_idx = len(sample_list) - 1
+                y[response_start_idx-1 : response_end_idx-1] = sample[response_start_idx : response_end_idx]
+            
+            x_list.append(x)
+            y_list.append(y)
+
+        x = torch.tensor(np.array(x_list), dtype=torch.long, device=self.device)
+        y = torch.tensor(np.array(y_list), dtype=torch.long, device=self.device)
+        
+        if x.min() < 0 or x.max() >= self.vocab_size:
+            raise ValueError(f"DataLoader detected invalid token ID in batch x. "
+                             f"Min: {x.min()}, Max: {x.max()}, Vocab size: {self.vocab_size}")
+        
+        return x, y
+
+    def get_state(self) -> Dict[str, Any]:
+        return {"current_position": self.current_position}
+
+    def load_state(self, state: Dict[str, Any]):
+        self.current_position = state.get("current_position", 0)
 
 # -----------------------------------------------------------------------------
-# 辅助函数
+# 检查点管理函数
 
-def clean_old_checkpoints(log_dir, keep_n):
-    """Keep only the last N checkpoints"""
-    if keep_n <= 0:
-        return  # Don't clean if keep_n is invalid
-
-    checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
-    if not checkpoints:
-        return  # No checkpoints to clean
-
-    checkpoints.sort(key=os.path.getctime)
-
-    if len(checkpoints) > keep_n:
-        for checkpoint in checkpoints[:-keep_n]:
-            try:
-                os.remove(checkpoint)
-                print(f"Removed old checkpoint: {checkpoint}")
-            except OSError as e:
-                print(f"Warning: Failed to remove checkpoint {checkpoint}: {e}")
-
-
-def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path, keep_last_n_checkpoints, master_process=True):
-    """Save a checkpoint with all necessary state"""
-    # Create a temporary file first to avoid corruption
+def save_checkpoint(step, model, optimizer, train_loader, val_loss, checkpoint_path, keep_last_n, master_process):
+    """安全地保存一个完整的检查点用于恢复训练"""
+    if not master_process: return
     temp_path = checkpoint_path + ".tmp"
-
     try:
-        # 确保 RNG 状态是正确的格式
         rng_state = torch.get_rng_state()
         if rng_state.dtype != torch.uint8:
             rng_state = rng_state.to(torch.uint8)
         
-        cuda_rng_state = None
+        checkpoint = {
+            "model": model.state_dict(), "optimizer": optimizer.state_dict(),
+            "config": model.config, "step": step, "val_loss": val_loss,
+            "train_loader_state": train_loader.get_state(),
+            "rng_state": rng_state, "python_rng_state": random.getstate(),
+            "numpy_rng_state": np.random.get_state(),
+        }
         if torch.cuda.is_available():
             cuda_rng_state = torch.cuda.get_rng_state()
             if cuda_rng_state.dtype != torch.uint8:
                 cuda_rng_state = cuda_rng_state.to(torch.uint8)
-        
-        checkpoint = {
-            "model": model.state_dict(),
-            "optimizer": optimizer.state_dict(),
-            "config": model.config,
-            "step": step,
-            "val_loss": val_loss,
-            "train_loader_state": train_loader.get_state(),
-            "rng_state": rng_state,
-            "cuda_rng_state": cuda_rng_state,
-            "numpy_rng_state": np.random.get_state(),
-            "python_rng_state": random.getstate(),
-        }
-
-        # Save to temporary file first
+            checkpoint["cuda_rng_state"] = cuda_rng_state
+            
         torch.save(checkpoint, temp_path)
-
-        # Atomically rename to final path
         os.rename(temp_path, checkpoint_path)
+        print(f"Saved checkpoint to {checkpoint_path}")
 
-        # save a symlink to the latest checkpoint
-        log_dir = os.path.dirname(checkpoint_path)
-        latest_path = os.path.join(log_dir, "latest_checkpoint.pt")
-        try:
-            if os.path.exists(latest_path) or os.path.islink(latest_path):
-                os.remove(latest_path)
-            os.symlink(os.path.basename(checkpoint_path), latest_path)
-        except OSError as e:
-            if master_process:
-                print(f"Warning: Failed to create latest checkpoint symlink: {e}")
-        if master_process:
-            print(f"Saved checkpoint to {checkpoint_path}")
+        latest_path = os.path.join(os.path.dirname(checkpoint_path), "latest_checkpoint.pt")
+        if os.path.exists(latest_path) or os.path.islink(latest_path): os.remove(latest_path)
+        os.symlink(os.path.basename(checkpoint_path), latest_path)
 
-        # Clean old checkpoints
-        if keep_last_n_checkpoints > 0:
-            clean_old_checkpoints(log_dir, keep_last_n_checkpoints)
-
+        if keep_last_n > 0:
+            checkpoints = sorted(glob.glob(os.path.join(os.path.dirname(checkpoint_path), "model_*.pt")), key=os.path.getmtime)
+            for old_ckpt in checkpoints[:-keep_last_n]: os.remove(old_ckpt)
     except Exception as e:
-        # Clean up temp file if save failed
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except:
-                pass
-        if master_process:
-            print(f"Error: Failed to save checkpoint: {e}")
-        raise
+        print(f"Error saving checkpoint: {e}")
 
-
-def load_checkpoint(checkpoint_path, model, optimizer, train_loader, device, master_process=True):
-    """Load a checkpoint and restore all state"""
-    if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
-
+def load_finetune_checkpoint(path, model, optimizer, train_loader, device, master_process):
+    """加载一个完整的微调检查点以恢复训练"""
+    with safe_globals([GPTConfig]):
+        checkpoint = torch.load(path, map_location=device, weights_only=False)
+    
+    model.load_state_dict(checkpoint['model'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    train_loader.load_state(checkpoint['train_loader_state'])
+    
     try:
-        # PyTorch 2.6+ 需要设置 weights_only=False 来加载包含 Python 对象的 checkpoint
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        if 'rng_state' in checkpoint: torch.set_rng_state(checkpoint['rng_state'])
+        if 'python_rng_state' in checkpoint: random.setstate(checkpoint['python_rng_state'])
+        if 'numpy_rng_state' in checkpoint: np.random.set_state(checkpoint['numpy_rng_state'])
+        if 'cuda_rng_state' in checkpoint and torch.cuda.is_available(): torch.cuda.set_rng_state(checkpoint['cuda_rng_state'])
     except Exception as e:
-        # 如果失败，尝试只加载权重
-        if master_process:
-            print(f"Warning: Failed to load full checkpoint, trying weights-only mode: {e}")
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
-        # 对于纯权重文件，创建一个最小的checkpoint结构
-        if "model" not in checkpoint:
-            checkpoint = {"model": checkpoint, "step": -1}
-        return checkpoint.get("step", -1) + 1
+        if master_process: print(f"Warning: Could not fully restore RNG state. Error: {e}")
 
-    # Load model weights
-    if "model" in checkpoint:
-        model.load_state_dict(checkpoint["model"])
-    else:
-        # 兼容旧格式或纯权重文件
-        model.load_state_dict(checkpoint)
-        return 0
-
-    # Load optimizer state if available
-    if "optimizer" in checkpoint and optimizer is not None:
-        try:
-            optimizer.load_state_dict(checkpoint["optimizer"])
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not load optimizer state: {e}")
-
-    # Load train loader state if available
-    if "train_loader_state" in checkpoint and train_loader is not None:
-        try:
-            train_loader.load_state(checkpoint["train_loader_state"])
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not load train loader state: {e}")
-
-    # Restore random states if available
-    if "rng_state" in checkpoint:
-        try:
-            rng_state = checkpoint["rng_state"]
-            if isinstance(rng_state, torch.Tensor):
-                rng_state = rng_state.cpu().contiguous()
-                if rng_state.dtype != torch.uint8:
-                    rng_state = rng_state.to(torch.uint8)
-            torch.set_rng_state(rng_state)
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not restore PyTorch RNG state: {e}")
-    
-    # 恢复 CUDA RNG 状态
-    if torch.cuda.is_available() and "cuda_rng_state" in checkpoint:
-        try:
-            cuda_rng_state = checkpoint["cuda_rng_state"]
-            if isinstance(cuda_rng_state, torch.Tensor):
-                cuda_rng_state = cuda_rng_state.cpu().contiguous()
-                if cuda_rng_state.dtype != torch.uint8:
-                    cuda_rng_state = cuda_rng_state.to(torch.uint8)
-            torch.cuda.set_rng_state(cuda_rng_state)
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not restore CUDA RNG state: {e}")
-    
-    # Restore numpy and python random states
-    if "numpy_rng_state" in checkpoint:
-        try:
-            np.random.set_state(checkpoint["numpy_rng_state"])
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not restore numpy RNG state: {e}")
-                
-    if "python_rng_state" in checkpoint:
-        try:
-            random.setstate(checkpoint["python_rng_state"])
-        except Exception as e:
-            if master_process:
-                print(f"Warning: Could not restore python RNG state: {e}")
-
-    start_step = checkpoint.get("step", -1) + 1  # Resume from next step
-    if master_process:
-        print(f"Resumed from checkpoint at step {checkpoint.get('step', 'unknown')}")
+    start_step = checkpoint['step'] + 1
+    if master_process: print(f"Resumed from finetuning checkpoint at step {checkpoint['step']}")
     return start_step
 
+def load_pretrained_weights(path, model, device, master_process):
+    """只加载预训练模型的权重，忽略其他所有状态"""
+    try:
+        with safe_globals([GPTConfig]):
+            checkpoint = torch.load(path, map_location=device, weights_only=False)
+        
+        if 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+            
+        model.load_state_dict(state_dict, strict=False)
+        if master_process: print(f"Successfully loaded pretrained weights from {path}")
+    except Exception as e:
+        if master_process: print(f"Error loading pretrained weights: {e}")
+
 # -----------------------------------------------------------------------------
-# 训练循环
+# 主函数
 
 def main():
-    # 参数解析
-    parser = argparse.ArgumentParser(description="Fine-tune GPT-2 on Dolly-15k dataset")
-    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
-    parser.add_argument(
-        "--checkpoint_path",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume from",
-    )
-    parser.add_argument(
-        "--auto_resume",
-        action="store_true",
-        help="Automatically resume from latest checkpoint",
-    )
-    parser.add_argument(
-        "--checkpoint_interval",
-        type=int,
-        default=-1,
-        help="Save checkpoint every N steps",
-    )
-    parser.add_argument(
-        "--keep_last_n_checkpoints",
-        type=int,
-        default=3,
-        help="Keep only the last N checkpoints, -1 to keep all",
-    )
-    parser.add_argument(
-        "--eval_interval",
-        type=int,
-        default=-1,  # -1表示每步都评估
-        help="Evaluate validation loss every N steps",
-    )
-    parser.add_argument(
-        "--generate_interval",
-        type=int,
-        default=2,
-        help="Generate text samples every N steps",
-    )
-    parser.add_argument(
-        "--pretrained_checkpoint",
-        type=str,
-        default="log/model_19072.pt",
-        help="Path to pretrained model checkpoint",
-    )
-    parser.add_argument(
-        "--data_dir",
-        type=str,
-        default="dolly15k",
-        help="Directory containing the Dolly dataset",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=16,
-        help="Batch size",
-    )
-    parser.add_argument(
-        "--max_lr",
-        type=float,
-        default=1e-6,  # 从6e-6降到1e-6，更保守的学习率
-        help="Maximum learning rate",
-    )
-    parser.add_argument(
-        "--warmup_steps",
-        type=int,
-        default=1,  # 增加warmup步数
-        help="Number of warmup steps",
-    )
-    parser.add_argument(
-        "--max_steps",
-        type=int,
-        default=3,  # 只训练3步，约0.6个epoch，避免过拟合
-        help="Maximum number of training steps (default: ~0.6 epoch for Dolly-15k)",
-    )
+    # --- 参数解析 ---
+    parser = argparse.ArgumentParser(description="Fine-tune GPT-2 on Dolly-15k dataset.")
+    parser.add_argument("--data_dir", type=str, default="dolly15k", help="数据目录")
+    parser.add_argument("--log_dir", type=str, default="logs_finetune", help="日志和检查点目录")
+    parser.add_argument("--pretrained_checkpoint", type=str, default="log/model_19072.pt", help="预训练模型路径")
+    parser.add_argument("--resume", type=str, choices=['auto', 'off'], default='off', help="是否从检查点恢复训练。'off'表示默认从预训练模型开始，'auto'表示从最新的微调检查点恢复。")
+    parser.add_argument("--checkpoint_interval", type=int, default=2, help="保存检查点的步数间隔")
+    parser.add_argument("--keep_last_n_checkpoints", type=int, default=3, help="保留最近的检查点数量")
+    parser.add_argument("--max_steps", type=int, default=5, help="最大训练步数")
+    parser.add_argument("--batch_size", "-B", type=int, default=16, help="批次大小")
+    parser.add_argument("--context_length", "-T", type=int, default=1024, help="最大上下文长度")
+    parser.add_argument("--grad_accum_steps", type=int, default=5, help="梯度累积步数")
+    parser.add_argument("--lr", type=float, default=3e-5, help="最大学习率")
+    parser.add_argument("--warmup_steps", type=int, default=2, help="学习率预热步数")
+    parser.add_argument("--eval_interval", type=int, default=2, help="验证步数间隔")
+    parser.add_argument("--generate_interval", type=int, default=2, help="生成示例文本的步数间隔")
     args = parser.parse_args()
 
-    # 微调专用配置
-    # 数据配置
-    data_dir = args.data_dir
-    batch_size = args.batch_size  # 微调使用较小的batch size
-    total_batch_size = 524288  # 0.5M tokens
-    assert total_batch_size % (batch_size * 1024) == 0
-    grad_accum_steps = total_batch_size // (batch_size * 1024)
-
-    # 优化器配置
-    max_lr = args.max_lr  # 微调使用更小的学习率（预训练的1/10）
-    min_lr = max_lr * 0.1
-    warmup_steps = args.warmup_steps  # 更短的warmup
-    weight_decay = 0.01  # 权重衰凊，防止过拟合
-
-    # 训练配置
-    # Dolly-15k约2.8M tokens，每个step处理0.5M tokens
-    # 1 epoch ≈ 2.8M / 0.5M ≈ 5-6 steps
-    max_steps = args.max_steps
-
-    # 评估配置
-    val_loss_every = args.eval_interval
-    val_max_steps = 20
-    generate_every = args.generate_interval
-
-    # 检查点配置
-    checkpoint_interval = args.checkpoint_interval
-    keep_last_n_checkpoints = args.keep_last_n_checkpoints
-    auto_resume = args.auto_resume
-    pretrained_checkpoint = args.pretrained_checkpoint
-
-    # 系统配置
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    compile_model = False  # torch.compile 在某些系统上可能有问题
-    seed = 1337
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-    # 设置DDP
+    # --- 系统与DDP设置 ---
     ddp = int(os.environ.get("RANK", -1)) != -1
     if ddp:
-        assert torch.cuda.is_available()
+        assert torch.cuda.is_available(), "DDP requires CUDA"
         dist.init_process_group(backend="nccl")
         ddp_rank = int(os.environ["RANK"])
         ddp_local_rank = int(os.environ["LOCAL_RANK"])
@@ -384,338 +237,173 @@ def main():
         torch.cuda.set_device(device)
         master_process = ddp_rank == 0
     else:
-        ddp_rank = 0
-        ddp_local_rank = 0
-        ddp_world_size = 1
+        ddp_rank, ddp_local_rank, ddp_world_size = 0, 0, 1
         master_process = True
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # 创建日志目录
-    log_dir = "logs_finetune"
+    device_type = "cuda" if device.startswith("cuda") else "cpu"
+    torch.manual_seed(1337 + ddp_rank)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(1337 + ddp_rank)
+
     if master_process:
-        os.makedirs(log_dir, exist_ok=True)
-        print(f"Logging to {log_dir}")
-        
-    # 创建模型
-    model = GPT(GPTConfig(vocab_size=50304))
-    model.to(device)
-    
-    if compile_model:
-        model = torch.compile(model)
-    
-    if ddp:
-        model = DDP(model, device_ids=[ddp_local_rank])
-    
-    raw_model = model.module if ddp else model
-    
-    # 创建数据加载器
-    print(f"Loading data from: {data_dir}")
-    train_loader = DataLoaderLite(data_dir, batch_size, 1024, "train", device)
-    val_loader = DataLoaderLite(data_dir, batch_size, 1024, "val", device)
-    
-    # 如果验证集为空，使用训练集的一部分
-    if len(val_loader.tokens) == 0:
-        print("No validation set found, using part of training set")
-        val_loader = train_loader
-    
-    # 优化器
-    optimizer = raw_model.configure_optimizers(
-        weight_decay=weight_decay, 
-        learning_rate=max_lr, 
-        device_type=device.split(":")[0]
-    )
-    
-    # Print optimizer info if master process
-    if master_process:
-        param_dict = {pn: p for pn, p in raw_model.named_parameters()}
-        param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
-        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-        num_decay_params = sum(p.numel() for p in decay_params)
-        num_nodecay_params = sum(p.numel() for p in nodecay_params)
-        print(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
-        print(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
-        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device.split(":")[0] == "cuda"
-        print(f"using fused AdamW: {use_fused}")
-    
-    # 学习率调度
-    def get_lr(it):
-        if it < warmup_steps:
-            return max_lr * (it + 1) / warmup_steps
-        if it > max_steps:
-            return min_lr
-        decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
-        assert 0 <= decay_ratio <= 1
-        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-        return min_lr + coeff * (max_lr - min_lr)
-    
-    # 初始化tokenizer
-    enc = tiktoken.get_encoding("gpt2")
-    
-    # 确定起始步骤和加载检查点
-    start_step = 0
-    
-    # 首先尝试恢复微调检查点
-    if args.resume or args.auto_resume:
-        checkpoint_path = args.checkpoint_path
-        if args.auto_resume and checkpoint_path is None:
-            # Find the latest checkpoint
-            latest_symlink = os.path.join(log_dir, "latest_checkpoint.pt")
-            if os.path.islink(latest_symlink) and os.path.exists(latest_symlink):
-                # Prefer using the latest symlink if it exists
-                checkpoint_path = os.path.join(log_dir, os.readlink(latest_symlink))
-                if master_process:
-                    print(
-                        f"Auto-resuming from latest checkpoint (via symlink): {checkpoint_path}"
-                    )
-            else:
-                # Fallback to finding the latest by timestamp
-                checkpoints = glob.glob(os.path.join(log_dir, "model_*.pt"))
-                if checkpoints:
-                    checkpoint_path = max(checkpoints, key=os.path.getctime)
-                    if master_process:
-                        print(f"Auto-resuming from latest checkpoint: {checkpoint_path}")
+        os.makedirs(args.log_dir, exist_ok=True)
+        print(f"Running on device: {device}, World size: {ddp_world_size}")
+        print(f"Logging to {args.log_dir}")
+        print("Arguments:", vars(args))
+    log_file = os.path.join(args.log_dir, f"log.txt")
 
-        # In DDP, ensure all processes use the same checkpoint
-        if ddp:
-            # Broadcast checkpoint path from master to all processes
-            if master_process:
-                # Convert checkpoint path to bytes for broadcasting
-                path_bytes = checkpoint_path.encode("utf-8") if checkpoint_path else b""
-                path_length = torch.tensor(
-                    [len(path_bytes)], dtype=torch.int64, device=device
-                )
-            else:
-                path_length = torch.tensor([0], dtype=torch.int64, device=device)
-
-            # Broadcast length first
-            dist.broadcast(path_length, 0)
-
-            # Prepare buffer for path
-            if not master_process:
-                path_bytes = torch.zeros(
-                    path_length.item(), dtype=torch.uint8, device=device
-                )
-            else:
-                path_bytes = torch.tensor(
-                    list(path_bytes), dtype=torch.uint8, device=device
-                )
-
-            # Broadcast the actual path
-            dist.broadcast(path_bytes, 0)
-
-            # Decode on non-master processes
-            if not master_process and path_length.item() > 0:
-                checkpoint_path = bytes(path_bytes.cpu().numpy()).decode("utf-8")
-            elif not master_process:
-                checkpoint_path = None
-
-        if checkpoint_path:
-            try:
-                start_step = load_checkpoint(
-                    checkpoint_path, raw_model, optimizer, train_loader, device, master_process
-                )
-            except (FileNotFoundError, RuntimeError, KeyError) as e:
-                if master_process:
-                    print(f"Error loading checkpoint: {e}")
-                    print("Will try loading pretrained model instead...")
-                start_step = 0
+    # --- 模型与优化器初始化 ---
+    vocab_size = 50304
+    model_config = GPTConfig(vocab_size=vocab_size)
+    model = GPT(model_config)
     
-    # 如果没有恢复微调检查点，加载预训练模型
-    if start_step == 0 and pretrained_checkpoint:
-        if master_process:
-            print(f"Loading pretrained model from {pretrained_checkpoint}")
-        try:
-            # 尝试加载完整的检查点
-            pretrained_start_step = load_checkpoint(
-                pretrained_checkpoint, raw_model, None, None, device, master_process
-            )
-            if master_process:
-                print(f"Loaded pretrained model from step {pretrained_start_step - 1}")
-        except Exception as e:
-            if master_process:
-                print(f"Error loading pretrained model: {e}")
-                print("Starting with random initialization...")
-    
-    # 评估函数
-    @torch.no_grad()
-    def estimate_loss():
-        model.eval()
-        val_loader.current_position = 0
-        losses = []
-        for _ in range(val_max_steps):
-            x, y = val_loader.get_batch()
-            with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
-                _, loss = model(x, y)
-            losses.append(loss.item())
-        model.train()
-        return sum(losses) / len(losses)
-    
-    # 生成函数
-    @torch.no_grad()
-    def generate_samples():
-        model.eval()
-        prompts = [
-            "### Instruction:\nWhat is machine learning?\n\n### Response:\n",
-            "### Instruction:\nExplain quantum computing in simple terms.\n\n### Response:\n",
-            "### Instruction:\nWrite a Python function to reverse a string.\n\n### Response:\n",
-        ]
-        
-        for i, prompt in enumerate(prompts):
-            if master_process:
-                print(f"\nPrompt {i}: {prompt}")
-            
-            tokens = enc.encode(prompt)
-            tokens = [50256] + tokens  # prepend <|endoftext|>
-            tokens = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
-            
-            # 生成
-            xgen = tokens
-            max_new_tokens = 100
-            temperature = 0.8
-            top_k = 40
-            
+    if not hasattr(GPT, 'generate'):
+        @torch.no_grad()
+        def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+            self.eval()
             for _ in range(max_new_tokens):
-                with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
-                    logits, _ = model(xgen)
+                idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+                logits, _ = self(idx_cond)
                 logits = logits[:, -1, :] / temperature
-                
-                # 可选top-k采样
                 if top_k is not None:
                     v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                     logits[logits < v[:, [-1]]] = -float('Inf')
-                
-                probs = torch.nn.functional.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
-                
-                # 检查是否遇到结束标记
-                if next_token.item() == 50256:  # <|endoftext|> token
-                    break
-                    
-                xgen = torch.cat((xgen, next_token), dim=1)
-            
-            if master_process:
-                output = enc.decode(xgen[0].tolist())
-                print(f"Response: {output}")
-        
+                probs = F.softmax(logits, dim=-1)
+                idx_next = torch.multinomial(probs, num_samples=1)
+                idx = torch.cat((idx, idx_next), dim=1)
+            self.train()
+            return idx
+        GPT.generate = generate
+        if master_process:
+            print("Dynamically added 'generate' method to GPT class.")
+
+    model.to(device)
+    if ddp:
+        model = DDP(model, device_ids=[ddp_local_rank])
+    raw_model = model.module if ddp else model
+    optimizer = raw_model.configure_optimizers(weight_decay=0.01, learning_rate=args.lr, device_type=device_type)
+
+    # --- 数据加载器 ---
+    train_loader = DataLoaderLite(args.data_dir, args.batch_size, args.context_length, "train", master_process, device, vocab_size)
+    val_loader = DataLoaderLite(args.data_dir, args.batch_size, args.context_length, "val", master_process, device, vocab_size)
+    torch.set_float32_matmul_precision("high")
+
+    # --- 学习率调度器 ---
+    def get_lr(it):
+        if it < args.warmup_steps:
+            return args.lr * (it + 1) / args.warmup_steps
+        if it > args.max_steps:
+            return args.lr * 0.1
+        decay_ratio = (it - args.warmup_steps) / (args.max_steps - args.warmup_steps)
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return args.lr * 0.1 + coeff * (args.lr * 0.9)
+    
+    # --- 评估与生成函数 ---
+    @torch.no_grad()
+    def estimate_loss():
+        model.eval()
+        losses = torch.zeros(20, device=device)
+        val_loader.reset()
+        for k in range(20):
+            x, y = val_loader.get_batch()
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                _, loss = model(x, y)
+            losses[k] = loss.item()
         model.train()
+        if ddp:
+            dist.all_reduce(losses, op=dist.ReduceOp.AVG)
+        return losses.mean().item()
+
+    @torch.no_grad()
+    def generate_samples():
+        if not master_process: return
+        model.eval()
+        enc = tiktoken.get_encoding("gpt2")
+        prompts = [
+            "### Instruction:\nWhat is machine learning?\n\n### Response:\n",
+            "### Instruction:\nExplain quantum computing in simple terms.\n\n### Response:\n",
+        ]
+        for prompt in prompts:
+            print(f"\n--- Prompt ---\n{prompt}", end="")
+            tokens = enc.encode(prompt)
+            tokens = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+            generated_tokens = raw_model.generate(tokens, max_new_tokens=100, temperature=0.7, top_k=50)
+            generated_text = enc.decode(generated_tokens[0, len(tokens[0]):].tolist())
+            print(generated_text)
+        model.train()
+
+    # --- 检查点恢复 ---
+    start_step = 0
+    if args.resume == 'auto':
+        latest_ckpt = os.path.join(args.log_dir, "latest_checkpoint.pt")
+        if os.path.exists(latest_ckpt):
+            try:
+                start_step = load_finetune_checkpoint(latest_ckpt, raw_model, optimizer, train_loader, device, master_process)
+            except Exception as e:
+                print(f"Failed to load finetuning checkpoint, starting from scratch. Error: {e}")
+                start_step = 0
+
+    if start_step == 0 and os.path.exists(args.pretrained_checkpoint):
+        load_pretrained_weights(args.pretrained_checkpoint, raw_model, device, master_process)
+
+    # --- 主训练循环 ---
+    if master_process: print(f"\n🚀 Starting fine-tuning from step {start_step}...")
+    val_loss = float('inf')
     
-    # 训练开始
-    if master_process:
-        print(f"\n{'='*50}")
-        print(f"Starting fine-tuning from step {start_step}")
-        print(f"Total steps: {max_steps}")
-        print(f"Batch size: {batch_size}, Gradient accumulation: {grad_accum_steps}")
-        print(f"Effective batch size: {batch_size * grad_accum_steps}")
-        print(f"Tokens per step: {batch_size * 1024 * grad_accum_steps:,}")
-        print(f"Total tokens in dataset: ~2.8M")
-        print(f"Approximate epochs: {(max_steps * batch_size * 1024 * grad_accum_steps) / 2.8e6:.1f}")
-        print(f"Learning rate: {max_lr} -> {min_lr}")
-        print(f"Weight decay: {weight_decay}")
-        print(f"{'='*50}\n")
-    
-    # 训练前生成样本对比
-    if master_process and start_step == 0:
-        print("\n=== Pre-finetuning samples ===")
-        generate_samples()
-    
-    # 主训练循环
-    for step in range(start_step, max_steps):
+    if start_step == 0 and master_process: generate_samples()
+
+    for step in range(start_step, args.max_steps):
         t0 = time.time()
         
-        # 学习率调度
-        lr = get_lr(step)
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = lr
-        
-        # 梯度累积
+        if step > 0 and step % args.eval_interval == 0:
+            val_loss = estimate_loss()
+            if master_process:
+                print(f"\nValidation loss: {val_loss:.4f}")
+                with open(log_file, "a") as f:
+                    f.write(f"step {step} val_loss {val_loss:.4f}\n")
+
         optimizer.zero_grad()
         loss_accum = 0.0
-        
-        for micro_step in range(grad_accum_steps):
+        for _ in range(args.grad_accum_steps):
             x, y = train_loader.get_batch()
-            if ddp:
-                model.require_backward_grad_sync = micro_step == grad_accum_steps - 1
-            
-            with torch.autocast(device_type=device.split(":")[0], dtype=torch.bfloat16):
+            if ddp: model.require_backward_grad_sync = (_ == args.grad_accum_steps - 1)
+            with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
                 _, loss = model(x, y)
-                loss = loss / grad_accum_steps
-            
+                loss = loss / args.grad_accum_steps
             loss_accum += loss.detach()
             loss.backward()
         
-        # 梯度裁剪
+        if ddp: dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)
         norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         
-        # 参数更新
+        lr = get_lr(step)
+        for param_group in optimizer.param_groups: param_group["lr"] = lr
         optimizer.step()
         
-        # 同步
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        dt = time.time() - t0
         
-        # 日志
-        t1 = time.time()
-        dt = t1 - t0
-        tokens_per_sec = (batch_size * 1024 * grad_accum_steps) / dt
+        if master_process:
+            tokens_per_sec = (args.batch_size * args.context_length * args.grad_accum_steps) / dt
+            log_str = (f"step {step:5d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | "
+                       f"norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
+            print(log_str)
+            with open(log_file, "a") as f:
+                f.write(f"step {step} train_loss {loss_accum.item():.6f}\n")
         
-        if master_process and step % 10 == 0:
-            print(f"step {step:4d} | loss: {loss_accum.item():.6f} | lr {lr:.4e} | "
-                  f"norm: {norm:.4f} | dt: {dt*1000:.2f}ms | tok/sec: {tokens_per_sec:.2f}")
-        
-        # 验证
-        if step > 0 and step % val_loss_every == 0:
-            val_loss = estimate_loss()
-            if master_process:
-                print(f"validation loss: {val_loss:.4f}")
-        
-        # 生成样本
-        if master_process and step > 0 and step % generate_every == 0:
-            print(f"\n=== Generation samples at step {step} ===")
+        if step > 0 and step % args.generate_interval == 0:
             generate_samples()
         
-        # 保存检查点
-        last_step = step == max_steps - 1
-        if master_process and step > 0 and (step % checkpoint_interval == 0 or last_step):
-            checkpoint_path = os.path.join(log_dir, f"model_{step:05d}.pt")
-            # Use the last validation loss if available, otherwise use current training loss
-            val_loss_to_save = val_loss if 'val_loss' in locals() else loss_accum.item()
-            try:
-                save_checkpoint(
-                    step,
-                    raw_model,
-                    optimizer,
-                    train_loader,
-                    val_loss_to_save,
-                    checkpoint_path,
-                    keep_last_n_checkpoints,
-                    master_process,
-                )
-            except Exception as e:
-                print(f"Warning: Failed to save checkpoint at step {step}: {e}")
-                print("Training will continue, but checkpoint was not saved.")
+        # 【关键修正】修正 save_checkpoint 的调用参数
+        if args.checkpoint_interval > 0 and (step % args.checkpoint_interval == 0 or step == args.max_steps - 1):
+            checkpoint_path = os.path.join(args.log_dir, f"model_{step:05d}.pt")
+            save_checkpoint(step, raw_model, optimizer, train_loader, val_loss, 
+                            checkpoint_path, args.keep_last_n_checkpoints, master_process)
     
-    # 训练结束
     if master_process:
-        print("\n=== Fine-tuning completed ===")
-        print("Final generation samples:")
+        print("\n🎉 Fine-tuning completed!")
         generate_samples()
-        
-        # 保存最终模型
-        final_path = os.path.join(log_dir, "model_final.pt")
-        try:
-            save_checkpoint(
-                max_steps,
-                raw_model,
-                optimizer,
-                train_loader,
-                val_loss if 'val_loss' in locals() else loss_accum.item(),
-                final_path,
-                keep_last_n_checkpoints,
-                master_process,
-            )
-        except Exception as e:
-            print(f"Warning: Failed to save final checkpoint: {e}")
     
     if ddp:
         dist.destroy_process_group()

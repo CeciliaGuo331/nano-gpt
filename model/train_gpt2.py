@@ -246,7 +246,40 @@ class GPT(nn.Module):
         )
         return optimizer
 
+    @torch.no_grad()
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        """
+        从一个初始的 token 序列 idx (形状: B, T) 开始，生成后续的 token。
+        """
+        # 确保模型处于评估模式
+        self.eval()
+        for _ in range(max_new_tokens):
+            # 如果当前序列长度超过了模型的上下文长度，就截取最后 block_size 个 token
+            idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            
+            # 前向传播，获取 logits
+            logits, _ = self(idx_cond)
+            
+            # 只关注最后一个时间步的 logits
+            logits = logits[:, -1, :] / temperature
+            
+            # 可选：应用 top-k 截断
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float('Inf')
+            
+            # 应用 softmax 得到概率分布
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            
+            # 从概率分布中采样下一个 token
+            idx_next = torch.multinomial(probs, num_samples=1)
+            
+            # 将新采样的 token 拼接到序列的末尾
+            idx = torch.cat((idx, idx_next), dim=1)
 
+        # 恢复到训练模式
+        self.train()
+        return idx
 # -----------------------------------------------------------------------------
 import tiktoken
 import numpy as np
