@@ -406,47 +406,15 @@ if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Train GPT-2")
     parser.add_argument("--resume", action="store_true", help="Resume from checkpoint")
-    parser.add_argument(
-        "--checkpoint_path",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume from",
-    )
-    parser.add_argument(
-        "--auto_resume",
-        action="store_true",
-        help="Automatically resume from latest checkpoint",
-    )
-    parser.add_argument(
-        "--checkpoint_interval",
-        type=int,
-        default=5000,
-        help="Save checkpoint every N steps",
-    )
-    parser.add_argument(
-        "--keep_last_n_checkpoints",
-        type=int,
-        default=-1,
-        help="Keep only the last N checkpoints, -1 to keep all",
-    )
-    parser.add_argument(
-        "--eval_interval",
-        type=int,
-        default=250,
-        help="Evaluate validation loss every N steps",
-    )
-    parser.add_argument(
-        "--hellaswag_interval",
-        type=int,
-        default=250,
-        help="Evaluate HellaSwag every N steps",
-    )
-    parser.add_argument(
-        "--generate_interval",
-        type=int,
-        default=250,
-        help="Generate text samples every N steps",
-    )
+    parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to checkpoint to resume from")
+    parser.add_argument("--auto_resume", action="store_true", help="Automatically resume from latest checkpoint")
+    parser.add_argument("--checkpoint_interval", type=int, default=5000, help="Save checkpoint every N steps")
+    parser.add_argument("--keep_last_n_checkpoints", type=int, default=-1, help="Keep only the last N checkpoints, -1 to keep all")
+    parser.add_argument("--eval_interval", type=int, default=250, help="Evaluate validation loss every N steps")
+    parser.add_argument("--hellaswag_interval", type=int, default=250, help="Evaluate HellaSwag every N steps")
+    parser.add_argument("--generate_interval", type=int, default=250, help="Generate text samples every N steps")
+    parser.add_argument("--max_steps", type=int, default=19073, help="Max training steps")
+    parser.add_argument("--batch_size", "-B", type=int, default=16, help="Batch size")
     args = parser.parse_args()
 
     # run the training loop
@@ -491,7 +459,7 @@ if __name__ == "__main__":
     enc = tiktoken.get_encoding("gpt2")
 
     total_batch_size = 524288  # 2**19, ~0.5M, in number of tokens
-    B = 16  # micro batch size
+    B = args.batch_size  # micro batch size
     T = 1024  # sequence length
     assert (
         total_batch_size % (B * T * ddp_world_size) == 0
@@ -526,10 +494,9 @@ if __name__ == "__main__":
     max_lr = 6e-4
     min_lr = max_lr * 0.1
     warmup_steps = 715
-    max_steps = (
-        19073  # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
-    )
-
+    max_steps = args.max_steps
+    # 19,073 steps is ~1 epoch, if data is 10B tokens and batch size 0.5M tokens
+    
 
     def get_lr(it):
         # 1) linear warmup for warmup_iters steps

@@ -176,10 +176,17 @@ def load_finetune_checkpoint(path, model, optimizer, train_loader, device, maste
     train_loader.load_state(checkpoint['train_loader_state'])
     
     try:
-        if 'rng_state' in checkpoint: torch.set_rng_state(checkpoint['rng_state'])
+        if 'rng_state' in checkpoint:
+            rng_state = checkpoint['rng_state'].cpu().to(torch.uint8)
+            torch.set_rng_state(rng_state)
+
+        if 'cuda_rng_state' in checkpoint and torch.cuda.is_available():
+            cuda_rng_state = checkpoint['cuda_rng_state'].cpu().to(torch.uint8)
+            torch.cuda.set_rng_state(cuda_rng_state)
+
         if 'python_rng_state' in checkpoint: random.setstate(checkpoint['python_rng_state'])
         if 'numpy_rng_state' in checkpoint: np.random.set_state(checkpoint['numpy_rng_state'])
-        if 'cuda_rng_state' in checkpoint and torch.cuda.is_available(): torch.cuda.set_rng_state(checkpoint['cuda_rng_state'])
+        
     except Exception as e:
         if master_process: print(f"Warning: Could not fully restore RNG state. Error: {e}")
 
@@ -213,16 +220,16 @@ def main():
     parser.add_argument("--log_dir", type=str, default="logs_finetune", help="日志和检查点目录")
     parser.add_argument("--pretrained_checkpoint", type=str, default="log/model_19072.pt", help="预训练模型路径")
     parser.add_argument("--resume", type=str, choices=['auto', 'off'], default='off', help="是否从检查点恢复训练。'off'表示默认从预训练模型开始，'auto'表示从最新的微调检查点恢复。")
-    parser.add_argument("--checkpoint_interval", type=int, default=2, help="保存检查点的步数间隔")
+    parser.add_argument("--checkpoint_interval", type=int, default=50, help="保存检查点的步数间隔")
     parser.add_argument("--keep_last_n_checkpoints", type=int, default=3, help="保留最近的检查点数量")
-    parser.add_argument("--max_steps", type=int, default=5, help="最大训练步数")
-    parser.add_argument("--batch_size", "-B", type=int, default=16, help="批次大小")
+    parser.add_argument("--max_steps", type=int, default=500, help="最大训练步数")
+    parser.add_argument("--batch_size", "-B", type=int, default=2, help="批次大小")
     parser.add_argument("--context_length", "-T", type=int, default=1024, help="最大上下文长度")
     parser.add_argument("--grad_accum_steps", type=int, default=5, help="梯度累积步数")
     parser.add_argument("--lr", type=float, default=3e-5, help="最大学习率")
-    parser.add_argument("--warmup_steps", type=int, default=2, help="学习率预热步数")
-    parser.add_argument("--eval_interval", type=int, default=2, help="验证步数间隔")
-    parser.add_argument("--generate_interval", type=int, default=2, help="生成示例文本的步数间隔")
+    parser.add_argument("--warmup_steps", type=int, default=100, help="学习率预热步数")
+    parser.add_argument("--eval_interval", type=int, default=50, help="验证步数间隔")
+    parser.add_argument("--generate_interval", type=int, default=50, help="生成示例文本的步数间隔")
     args = parser.parse_args()
 
     # --- 系统与DDP设置 ---
@@ -313,6 +320,7 @@ def main():
         model.train()
         if ddp:
             dist.all_reduce(losses, op=dist.ReduceOp.AVG)
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
         return losses.mean().item()
 
     @torch.no_grad()
@@ -332,6 +340,7 @@ def main():
             generated_text = enc.decode(generated_tokens[0, len(tokens[0]):].tolist())
             print(generated_text)
         model.train()
+        if torch.cuda.is_available(): torch.cuda.empty_cache()
 
     # --- 检查点恢复 ---
     start_step = 0
@@ -395,15 +404,32 @@ def main():
         if step > 0 and step % args.generate_interval == 0:
             generate_samples()
         
-        # 【关键修正】修正 save_checkpoint 的调用参数
-        if args.checkpoint_interval > 0 and (step % args.checkpoint_interval == 0 or step == args.max_steps - 1):
+        # 【关键修正】移除在循环最后一步强制保存的逻辑
+        if args.checkpoint_interval > 0 and step > 0 and step % args.checkpoint_interval == 0:
             checkpoint_path = os.path.join(args.log_dir, f"model_{step:05d}.pt")
             save_checkpoint(step, raw_model, optimizer, train_loader, val_loss, 
                             checkpoint_path, args.keep_last_n_checkpoints, master_process)
     
+    # --- 训练结束后的最终评估与保存 ---
     if master_process:
         print("\n🎉 Fine-tuning completed!")
+        
+        # 执行最终评估
+        print("Performing final evaluation...")
+        final_val_loss = estimate_loss()
+        print(f"Final validation loss: {final_val_loss:.4f}")
+        with open(log_file, "a") as f:
+            f.write(f"final val_loss {final_val_loss:.4f}\n")
+            
+        # 生成最终样本
+        print("Generating final samples...")
         generate_samples()
+        
+        # 【关键修正】保存最终模型，使用正确的步数和文件名格式
+        final_step = args.max_steps - 1
+        final_checkpoint_path = os.path.join(args.log_dir, f"model_{final_step:05d}.pt")
+        save_checkpoint(final_step, raw_model, optimizer, train_loader, final_val_loss, 
+                        final_checkpoint_path, args.keep_last_n_checkpoints, master_process)
     
     if ddp:
         dist.destroy_process_group()
