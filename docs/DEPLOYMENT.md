@@ -82,8 +82,9 @@ curl -X POST http://localhost:5002/generate \
      -H "Content-Type: application/json" \
      -H "X-API-Key: a_default_key_for_testing" \
      -d '{
-           "prompt": "你好，世界",
-           "max_length": 50
+           "prompt": "Hello, world!",
+           "max_length": 100,
+           "model_name": "latest_checkpoint.pt"
          }'
 ```
 
