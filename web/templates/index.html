@@ -1,44 +1,255 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nano-GPT 交互界面</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPT 模型推理</title>
+    <style>
+      /* 使用内联样式，避免外部文件依赖 */
+      @import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap");
 
+      :root {
+        --primary-color: #007bff;
+        --primary-hover-color: #0056b3;
+        --background-color: #f8f9fa;
+        --container-bg-color: #ffffff;
+        --text-color: #343a40;
+        --border-color: #dee2e6;
+        --shadow-color: rgba(0, 0, 0, 0.1);
+      }
+
+      body {
+        font-family: "Noto Sans SC", sans-serif;
+        background-color: var(--background-color);
+        color: var(--text-color);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        margin: 0;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+
+      .container {
+        background: var(--container-bg-color);
+        padding: 2.5rem;
+        border-radius: 16px;
+        box-shadow: 0 10px 35px var(--shadow-color);
+        width: 100%;
+        max-width: 650px;
+        box-sizing: border-box;
+        transition: all 0.3s ease;
+      }
+
+      h1 {
+        color: var(--text-color);
+        text-align: center;
+        margin-top: 0;
+        margin-bottom: 2rem;
+        font-weight: 700;
+      }
+
+      textarea {
+        width: 100%;
+        padding: 1rem;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        margin-bottom: 1.5rem;
+        min-height: 120px;
+        box-sizing: border-box;
+        resize: vertical;
+        font-size: 1rem;
+        transition: border-color 0.2s, box-shadow 0.2s;
+      }
+
+      textarea:focus {
+        outline: none;
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+      }
+
+      .param-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .param-group {
+        display: flex;
+        flex-direction: column;
+      }
+
+      .param-group label {
+        margin-bottom: 0.5rem;
+        font-size: 0.9rem;
+        color: #6c757d;
+      }
+
+      .param-group input {
+        width: 100%;
+        padding: 0.75rem;
+        border-radius: 8px;
+        border: 1px solid var(--border-color);
+        box-sizing: border-box;
+        font-size: 1rem;
+      }
+
+      .param-group input:focus {
+        outline: none;
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
+      }
+
+      button {
+        width: 100%;
+        padding: 1rem;
+        background: linear-gradient(45deg, #007bff, #0056b3);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 1.1rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.3);
+      }
+
+      button:disabled {
+        background: #cccccc;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+      }
+
+      .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: spin 1s ease-in-out infinite;
+        margin-right: 10px;
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .result-box {
+        margin-top: 2rem;
+        padding: 1.5rem;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 8px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        min-height: 50px;
+        transition: background-color 0.3s;
+      }
+
+      .result-box.error {
+        background-color: #fff3f3;
+        color: #d9534f;
+        border-color: #d9534f;
+      }
+    </style>
+  </head>
+  <body>
     <div class="container">
-        <header>
-            <h1>Nano-GPT 指令微调模型</h1>
-            <p class="subtitle">一个基于 Karpathy 教程复现并微调的入门级指令助手</p>
-        </header>
+      <h1>GPT 模型推理</h1>
+      <textarea
+        id="prompt-input"
+        placeholder="在这里输入你的提示词..."
+      ></textarea>
 
-        <main>
-            <div class="input-section">
-                <label for="prompt-input">输入你的指令:</label>
-                <textarea id="prompt-input" rows="5" placeholder="例如：写一首关于夏夜的五言绝句"></textarea>
-                
-                <div class="controls">
-                    <label for="max-length-slider">最大生成长度: <span id="max-length-value">100</span></label>
-                    <input type="range" id="max-length-slider" min="10" max="512" value="100">
-                </div>
+      <div class="param-grid">
+        <div class="param-group">
+          <label for="max-length-input">最大长度 (Max Tokens)</label>
+          <input type="number" id="max-length-input" value="150" />
+        </div>
+        <div class="param-group">
+          <label for="temperature-input">温度 (Temperature)</label>
+          <input type="number" id="temperature-input" value="0.7" step="0.1" />
+        </div>
+      </div>
 
-                <button id="generate-btn">生成文本</button>
-            </div>
-
-            <div class="output-section">
-                <h2>生成结果</h2>
-                <div id="loader" class="loader" style="display: none;"></div>
-                <pre id="result-output">模型生成的结果将显示在这里...</pre>
-            </div>
-        </main>
-        
-        <footer>
-            <p>灵感来源于 Andrej Karpathy 的 "Let's build GPT" 教程</p>
-        </footer>
+      <button id="generate-button" onclick="generateText()">
+        <span id="button-text">生成文本</span>
+      </button>
+      <div class="result-box" id="result">生成的文本将显示在这里。</div>
     </div>
 
-    <script src="script.js"></script>
-</body>
+    <script>
+      // 将所有脚本内联，避免外部文件依赖
+      const generateButton = document.getElementById("generate-button");
+      const buttonText = document.getElementById("button-text");
+      const promptInput = document.getElementById("prompt-input");
+      const resultDiv = document.getElementById("result");
+      const maxLengthInput = document.getElementById("max-length-input");
+      const temperatureInput = document.getElementById("temperature-input");
+
+      async function generateText() {
+        const promptText = promptInput.value;
+        const maxLength = parseInt(maxLengthInput.value, 10) || 150;
+        const temperature = parseFloat(temperatureInput.value) || 0.7;
+
+        if (!promptText.trim()) {
+          resultDiv.textContent = "请输入有效的提示词。";
+          resultDiv.classList.add("error");
+          return;
+        }
+
+        // 禁用按钮并显示加载状态
+        generateButton.disabled = true;
+        buttonText.innerHTML = '<span class="spinner"></span>正在生成...';
+        resultDiv.textContent = "";
+        resultDiv.classList.remove("error");
+
+        try {
+          const response = await fetch("/generate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              prompt: promptText,
+              max_length: maxLength,
+              temperature: temperature,
+              top_k: 50,
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(
+              errorData.error || `HTTP 错误! 状态码: ${response.status}`
+            );
+          }
+
+          const data = await response.json();
+          resultDiv.textContent = data.generated_text;
+        } catch (error) {
+          console.error("请求错误:", error);
+          resultDiv.textContent = "发生错误: " + error.message;
+          resultDiv.classList.add("error");
+        } finally {
+          // 恢复按钮状态
+          generateButton.disabled = false;
+          buttonText.innerHTML = "生成文本";
+        }
+      }
+    </script>
+  </body>
 </html>

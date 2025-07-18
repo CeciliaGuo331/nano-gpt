@@ -32,7 +32,7 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
 **示例命令**
 
 ```bash
-curl -X POST http://localhost:5000/generate \
+curl -X POST http://localhost:5001/generate \
      -H "Content-Type: application/json" \
      -d '{
            "prompt": "Hello, world",
