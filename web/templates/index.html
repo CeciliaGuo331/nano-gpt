@@ -102,6 +102,11 @@
         box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25);
       }
 
+      /* API Key 输入框的样式 */
+      .api-key-group {
+        margin-bottom: 1.5rem;
+      }
+
       button {
         width: 100%;
         padding: 1rem;
@@ -185,6 +190,17 @@
         </div>
       </div>
 
+      <!-- !!! 关键改动 1: 添加 API Key 输入框 !!! -->
+      <div class="param-group api-key-group">
+        <label for="api-key-input">API Key</label>
+        <input
+          type="password"
+          id="api-key-input"
+          value="a_default_key_for_testing"
+          placeholder="请输入你的 API Key"
+        />
+      </div>
+
       <button id="generate-button" onclick="generateText()">
         <span id="button-text">生成文本</span>
       </button>
@@ -192,18 +208,19 @@
     </div>
 
     <script>
-      // 将所有脚本内联，避免外部文件依赖
       const generateButton = document.getElementById("generate-button");
       const buttonText = document.getElementById("button-text");
       const promptInput = document.getElementById("prompt-input");
       const resultDiv = document.getElementById("result");
       const maxLengthInput = document.getElementById("max-length-input");
       const temperatureInput = document.getElementById("temperature-input");
+      const apiKeyInput = document.getElementById("api-key-input"); // 获取 API Key 输入框
 
       async function generateText() {
         const promptText = promptInput.value;
         const maxLength = parseInt(maxLengthInput.value, 10) || 150;
         const temperature = parseFloat(temperatureInput.value) || 0.7;
+        const apiKey = apiKeyInput.value; // 获取 API Key 的值
 
         if (!promptText.trim()) {
           resultDiv.textContent = "请输入有效的提示词。";
@@ -211,7 +228,12 @@
           return;
         }
 
-        // 禁用按钮并显示加载状态
+        if (!apiKey.trim()) {
+          resultDiv.textContent = "请输入有效的 API Key。";
+          resultDiv.classList.add("error");
+          return;
+        }
+
         generateButton.disabled = true;
         buttonText.innerHTML = '<span class="spinner"></span>正在生成...';
         resultDiv.textContent = "";
@@ -222,6 +244,8 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
+              // !!! 关键改动 2: 在请求头中添加 API Key !!!
+              "X-API-Key": apiKey,
             },
             body: JSON.stringify({
               prompt: promptText,
@@ -231,21 +255,22 @@
             }),
           });
 
-          if (!response.ok) {
-            const errorData = await response.json();
+          const data = await response.json();
+
+          if (response.ok) {
+            // !!! 关键改动 3: 根据新的成功响应格式解析数据 !!!
+            resultDiv.textContent = data.data.generated_text;
+          } else {
+            // 根据新的失败响应格式抛出错误
             throw new Error(
-              errorData.error || `HTTP 错误! 状态码: ${response.status}`
+              data.error.message || `HTTP 错误! 状态码: ${response.status}`
             );
           }
-
-          const data = await response.json();
-          resultDiv.textContent = data.generated_text;
         } catch (error) {
           console.error("请求错误:", error);
           resultDiv.textContent = "发生错误: " + error.message;
           resultDiv.classList.add("error");
         } finally {
-          // 恢复按钮状态
           generateButton.disabled = false;
           buttonText.innerHTML = "生成文本";
         }

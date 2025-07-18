@@ -2,19 +2,64 @@
 
 ## 快速开始
 
-### 本地部署
+### 本地开发
+
+该方式使用 Flask 内置的开发服务器，非常适合在本地进行代码调试和测试。
 
 ```bash
-# 启动 Flask 服务
-python -m web.app
+# 启动 Flask 开发服务 (使用默认的测试 API Key)
+python web/app.py
 
-# 指定模型和端口
-MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
+# 你也可以通过环境变量指定模型和端口
+MODEL_CHECKPOINT=log/model_40000.pt python web/app.py
 ```
 
-服务启动后访问 `http://localhost:5000`
+服务启动后，你可以通过浏览器访问 `http://localhost:5002` 查看前端页面，并通过 API 工具调用接口。
+
+### 生产部署 (推荐)
+
+该方式使用 `waitress` 服务器，它比 Flask 自带的服务器更稳定、性能更好，适合在生产环境或需要对外提供服务时使用。
+
+1.  **安装 waitress**:
+
+    ```bash
+    pip install waitress
+    ```
+
+2.  **创建 `run.py` 启动脚本**:
+    在你的项目根目录下创建一个 `run.py` 文件，并填入以下内容：
+
+    ```python
+    # run.py
+    from waitress import serve
+    from web.app import app, load_model
+
+    print("正在加载模型，请稍候...")
+    with app.app_context():
+        load_model(app)
+    print("模型加载完毕。")
+
+    print("启动 Waitress 服务器，监听 http://0.0.0.0:5002")
+    serve(app, host='0.0.0.0', port=5002)
+    ```
+
+3.  **设置生产环境 API Key 并启动服务**:
+
+    ```bash
+    # 设置一个安全的 API Key，然后启动服务
+    export MY_API_KEY='your_super_secret_production_api_key'
+    python run.py
+    ```
 
 ## API 接口
+
+### 认证 (Authentication)
+
+所有对 `/generate` 接口的请求都必须包含一个有效的 API Key。请在 HTTP 请求头中提供该 Key。
+
+| Header      | 类型     | 描述                |
+| :---------- | :------- | :------------------ |
+| `X-API-Key` | `string` | 你的 API 访问密钥。 |
 
 ### POST /generate
 
@@ -22,236 +67,46 @@ MODEL_CHECKPOINT=log/model_40000.pt PORT=8080 python -m web.app
 
 **请求 Body 参数**
 
-| 参数          | 类型      | 是否必需 | 默认值 | 描述                                                |
-| :------------ | :-------- | :------- | :----- | :-------------------------------------------------- |
-| `prompt`      | `string`  | **是**   | `''`   | 作为生成起点的提示文本。                            |
-| `max_length`  | `integer` | 否       | `100`  | 要生成的最大 token 数量。                           |
-| `temperature` | `float`   | 否       | `0.8`  | 控制生成文本的随机性。值越高，随机性越强。          |
-| `top_k`       | `integer` | 否       | `50`   | 在每一步生成时，只从概率最高的 `k` 个词中进行采样。 |
+| 参数          | 类型      | 是否必需 | 默认值 | 描述                                                             |
+| :------------ | :-------- | :------- | :----- | :--------------------------------------------------------------- |
+| `prompt`      | `string`  | **是**   | `''`   | 作为生成起点的提示文本，不能为空。                               |
+| `max_length`  | `integer` | 否       | `150`  | 要生成的最大 token 数量。有效范围：1 到 512。                    |
+| `temperature` | `float`   | 否       | `0.7`  | 控制生成文本的随机性。值越高，随机性越强。有效范围：0.0 到 2.0。 |
+| `top_k`       | `integer` | 否       | `50`   | 在每一步生成时，只从概率最高的 `k` 个词中进行采样。              |
 
 **示例命令**
 
 ```bash
-curl -X POST http://localhost:5001/generate \
+# 将 a_default_key_for_testing 替换为你的 API Key
+curl -X POST http://localhost:5002/generate \
      -H "Content-Type: application/json" \
+     -H "X-API-Key: a_default_key_for_testing" \
      -d '{
-           "prompt": "Hello, world",
+           "prompt": "你好，世界",
            "max_length": 50
          }'
 ```
 
-**响应示例**
+**成功响应示例** (`200 OK`)
 
 ```json
 {
-  "prompt": "Hello, world",
-  "generated_text": "Hello, world, for the world, where is the world? ...",
-  "tokens_generated": 50
+  "status": "success",
+  "data": {
+    "prompt": "你好，世界",
+    "generated_text": "你好，世界，这是一个美好的日子..."
+  }
 }
 ```
 
-### GET /health
-
-健康检查接口。
-
-**示例命令**
-
-```bash
-curl http://localhost:5000/health
-```
-
-**响应示例**
+**失败响应示例** (`401 Unauthorized`)
 
 ```json
 {
-  "status": "healthy",
-  "model_loaded": true,
-  "device": "cuda"
+  "status": "error",
+  "error": {
+    "type": "auth_error",
+    "message": "Unauthorized. Invalid or missing API Key."
+  }
 }
 ```
-
-<!--
-## 生产部署
-
-### 使用 Gunicorn
-
-```bash
-# 安装 Gunicorn
-pip install gunicorn
-
-# 启动服务（4个工作进程）
-gunicorn -w 4 -b 0.0.0.0:5000 web.app:app
-
-# 带超时设置
-gunicorn -w 4 -b 0.0.0.0:5000 --timeout 120 web.app:app
-```
-
-### Docker 部署
-
-**Dockerfile:**
-
-```dockerfile
-FROM pytorch/pytorch:2.0.0-cuda11.7-cudnn8-runtime
-
-WORKDIR /app
-
-# 安装依赖
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-
-# 复制代码
-COPY model/ ./model/
-COPY web/ ./web/
-COPY eval/ ./eval/
-
-# 复制模型文件
-COPY log/ ./log/
-
-# 暴露端口
-EXPOSE 5000
-
-# 启动服务
-CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:5000", "web.serve:app"]
-```
-
-**构建和运行：**
-
-```bash
-# 构建镜像
-docker build -t nano-gpt-api .
-
-# 运行容器
-docker run -p 5000:5000 --gpus all nano-gpt-api
-
-# 使用环境变量
-docker run -p 5000:5000 --gpus all \
-    -e MODEL_CHECKPOINT=/app/log/model_40000.pt \
-    nano-gpt-api
-```
-
-### 使用 Nginx 反向代理
-
-**nginx.conf:**
-
-```nginx
-upstream app {
-    server localhost:5000;
-}
-
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://app;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_read_timeout 300s;
-    }
-}
-```
-
-## 性能优化
-
-### 1. 模型加载优化
-
-```python
-# 在 web/app.py 中预加载模型
-model = load_model_from_checkpoint(checkpoint_path)
-model.eval()  # 设置为评估模式
-```
-
-### 2. 批处理请求
-
-对于高并发场景，可以实现请求批处理：
-
-```python
-# 累积多个请求
-batch_prompts = ["prompt1", "prompt2", "prompt3"]
-# 批量生成
-results = batch_generate(model, batch_prompts)
-```
-
-### 3. 缓存常见请求
-
-使用 Redis 缓存：
-
-```bash
-# 安装 Redis
-pip install redis
-
-# 在代码中使用缓存
-import redis
-cache = redis.Redis(host='localhost', port=6379)
-```
-
-## 监控和日志
-
-### 基础日志
-
-```python
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-```
-
-### 请求追踪
-
-```python
-@app.before_request
-def log_request():
-    logger.info(f"Request: {request.method} {request.path}")
-
-@app.after_request
-def log_response(response):
-    logger.info(f"Response: {response.status_code}")
-    return response
-```
-
-## 安全建议
-
-### 1. API 密钥认证
-
-```python
-API_KEY = os.environ.get('API_KEY')
-
-@app.before_request
-def check_api_key():
-    if request.headers.get('X-API-Key') != API_KEY:
-        return jsonify({'error': 'Invalid API key'}), 401
-```
-
-### 2. 请求限流
-
-```bash
-# 安装限流库
-pip install flask-limiter
-
-# 使用限流
-from flask_limiter import Limiter
-limiter = Limiter(app, key_func=lambda: request.remote_addr)
-
-@app.route('/generate', methods=['POST'])
-@limiter.limit("10 per minute")
-def generate():
-    # 处理请求
-```
-
-### 3. 输入验证
-
-```python
-def validate_request(data):
-    if not data.get('prompt'):
-        return False, "Prompt is required"
-
-    if len(data['prompt']) > 1000:
-        return False, "Prompt too long"
-
-    if data.get('max_length', 100) > 500:
-        return False, "max_length too large"
-
-    return True, None
-``` -->
