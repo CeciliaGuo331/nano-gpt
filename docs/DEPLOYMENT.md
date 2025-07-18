@@ -78,13 +78,19 @@ MODEL_CHECKPOINT=log/model_40000.pt python web/app.py
 
 ```bash
 # 将 a_default_key_for_testing 替换为你的 API Key
-curl -X POST http://localhost:5002/generate \
+curl -X POST http://localhost:5002/v1/chat/completions \
      -H "Content-Type: application/json" \
-     -H "X-API-Key: a_default_key_for_testing" \
+     -H "Authorization: Bearer a_default_key_for_testing" \
      -d '{
-           "prompt": "Hello, world!",
-           "max_length": 100,
-           "model_name": "latest_checkpoint.pt"
+           "model": "latest_checkpoint.pt",
+           "messages": [
+             {
+               "role": "user",
+               "content": "Hello, world!"
+             }
+           ],
+           "max_tokens": 100,
+           "temperature": 0.7
          }'
 ```
 
