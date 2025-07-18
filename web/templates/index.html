@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GPT 模型推理</title>
+    <title>GPT-2 模型推理</title>
     <style>
       /* 使用内联样式，避免外部文件依赖 */
       @import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&display=swap");
@@ -180,33 +180,39 @@
   </head>
   <body>
     <div class="container">
-      <h1>GPT 模型推理</h1>
+      <h1>GPT-2 模型推理</h1>
       <textarea
         id="prompt-input"
         placeholder="在这里输入你的提示词..."
       ></textarea>
 
-      <!-- !!! 关键改动 1: 添加模型选择下拉菜单 !!! -->
       <div class="form-group">
-        <label for="model-name-select">选择模型</label>
-        <select id="model-name-select">
-          <option value="latest_checkpoint.pt" selected>
-            微调模型 (latest_checkpoint.pt)
-          </option>
-          <option value="model_19072.pt">基础模型 (model_19072.pt)</option>
-          <!-- 在这里可以添加更多模型选项 -->
+        <label for="model-select">选择模型</label>
+        <select id="model-select">
+          <option value="">请提供有效的 API 地址和 Key</option>
         </select>
       </div>
 
       <div class="param-grid">
         <div class="param-group">
-          <label for="max-length-input">最大长度 (Max Tokens)</label>
-          <input type="number" id="max-length-input" value="150" />
+          <label for="max-tokens-input">最大长度 (Max Tokens)</label>
+          <input type="number" id="max-tokens-input" value="150" />
         </div>
         <div class="param-group">
           <label for="temperature-input">温度 (Temperature)</label>
           <input type="number" id="temperature-input" value="0.7" step="0.1" />
         </div>
+      </div>
+
+      <!-- !!! 关键改动 1: 添加 API 接口地址输入框 !!! -->
+      <div class="form-group">
+        <label for="api-base-url-input">API 接口地址 (Endpoint)</label>
+        <input
+          type="text"
+          id="api-base-url-input"
+          value="http://127.0.0.1:5002"
+          placeholder="例如: http://127.0.0.1:5002"
+        />
       </div>
 
       <div class="form-group">
@@ -230,28 +236,105 @@
       const buttonText = document.getElementById("button-text");
       const promptInput = document.getElementById("prompt-input");
       const resultDiv = document.getElementById("result");
-      const maxLengthInput = document.getElementById("max-length-input");
+      const maxTokensInput = document.getElementById("max-tokens-input");
       const temperatureInput = document.getElementById("temperature-input");
       const apiKeyInput = document.getElementById("api-key-input");
-      // !!! 关键改动 2: 获取模型选择元素 !!!
-      const modelNameSelect = document.getElementById("model-name-select");
+      const modelSelect = document.getElementById("model-select");
+      // !!! 关键改动 2: 获取新的输入框元素 !!!
+      const apiBaseUrlInput = document.getElementById("api-base-url-input");
+
+      function getApiBaseUrl() {
+        let baseUrl = apiBaseUrlInput.value.trim();
+        // 移除末尾可能存在的斜杠
+        if (baseUrl.endsWith("/")) {
+          baseUrl = baseUrl.slice(0, -1);
+        }
+        return baseUrl;
+      }
+
+      async function loadModels() {
+        const apiKey = apiKeyInput.value;
+        const baseUrl = getApiBaseUrl();
+
+        if (!apiKey.trim() || !baseUrl) {
+          modelSelect.innerHTML =
+            '<option value="">请输入 API 地址和 Key</option>';
+          modelSelect.disabled = true;
+          return;
+        }
+
+        modelSelect.innerHTML = "<option>正在加载模型...</option>";
+        modelSelect.disabled = true;
+
+        try {
+          // !!! 关键改动 3: 使用输入框中的地址构建 URL !!!
+          const modelsUrl = `${baseUrl}/v1/models`;
+          console.log(`正在从 ${modelsUrl} 加载模型...`);
+
+          const response = await fetch(modelsUrl, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+            },
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data.error?.message || `HTTP 错误! 状态码: ${response.status}`
+            );
+          }
+
+          const models = data.data;
+          modelSelect.innerHTML = "";
+
+          if (!models || models.length === 0) {
+            modelSelect.innerHTML = '<option value="">未找到可用模型</option>';
+            return;
+          }
+
+          models.forEach((model) => {
+            const option = document.createElement("option");
+            option.value = model.id;
+            option.textContent = model.id;
+            modelSelect.appendChild(option);
+          });
+        } catch (error) {
+          console.error("加载模型列表时出错:", error);
+          modelSelect.innerHTML = `<option value="">加载模型失败</option>`;
+          resultDiv.textContent = "加载模型列表失败: " + error.message;
+          resultDiv.classList.add("error");
+        } finally {
+          modelSelect.disabled = false;
+        }
+      }
+
+      // API 地址或 Key 变更时都重新加载模型
+      window.addEventListener("DOMContentLoaded", loadModels);
+      apiKeyInput.addEventListener("change", loadModels);
+      apiBaseUrlInput.addEventListener("change", loadModels);
 
       async function generateText() {
         const promptText = promptInput.value;
-        const maxLength = parseInt(maxLengthInput.value, 10) || 150;
+        const maxTokens = parseInt(maxTokensInput.value, 10) || 150;
         const temperature = parseFloat(temperatureInput.value) || 0.7;
         const apiKey = apiKeyInput.value;
-        // !!! 关键改动 3: 获取选择的模型名称 !!!
-        const modelName = modelNameSelect.value;
+        const modelName = modelSelect.value;
+        const baseUrl = getApiBaseUrl();
 
         if (!promptText.trim()) {
           resultDiv.textContent = "请输入有效的提示词。";
           resultDiv.classList.add("error");
           return;
         }
-
-        if (!apiKey.trim()) {
-          resultDiv.textContent = "请输入有效的 API Key。";
+        if (!apiKey.trim() || !baseUrl) {
+          resultDiv.textContent = "请输入有效的 API 地址和 Key。";
+          resultDiv.classList.add("error");
+          return;
+        }
+        if (!modelName) {
+          resultDiv.textContent = "请选择一个有效的模型。";
           resultDiv.classList.add("error");
           return;
         }
@@ -262,35 +345,39 @@
         resultDiv.classList.remove("error");
 
         try {
-          // 准备请求体
           const requestBody = {
-            prompt: promptText,
-            max_length: maxLength,
+            model: modelName,
+            messages: [{ role: "user", content: promptText }],
+            max_tokens: maxTokens,
             temperature: temperature,
-            top_k: 50,
-            // !!! 关键改动 4: 将模型名称添加到请求体中 !!!
-            model_name: modelName,
           };
 
-          console.log("发送请求:", JSON.stringify(requestBody, null, 2));
+          // !!! 关键改动 4: 使用输入框中的地址构建 URL !!!
+          const completionsUrl = `${baseUrl}/v1/chat/completions`;
+          console.log(`发送生成请求到 ${completionsUrl}`);
 
-          const response = await fetch("/generate", {
+          const response = await fetch(completionsUrl, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-API-Key": apiKey,
+              Authorization: `Bearer ${apiKey}`,
             },
             body: JSON.stringify(requestBody),
           });
 
           const data = await response.json();
 
-          if (response.ok) {
-            resultDiv.textContent = data.data.generated_text;
-          } else {
+          if (!response.ok) {
             throw new Error(
-              data.error.message || `HTTP 错误! 状态码: ${response.status}`
+              data.error?.message || `HTTP 错误! 状态码: ${response.status}`
             );
+          }
+
+          const generatedText = data.choices[0]?.message?.content;
+          if (generatedText) {
+            resultDiv.textContent = generatedText;
+          } else {
+            throw new Error("API 返回的数据格式不正确，未找到生成的文本。");
           }
         } catch (error) {
           console.error("请求错误:", error);
