@@ -15,8 +15,42 @@ from model.train_gpt2 import GPT, GPTConfig
 
 # --- 应用初始化 ---
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.logger.setLevel(logging.INFO)
-CORS(app) 
+# 将日志级别设置为DEBUG以捕获所有信息
+app.logger.setLevel(logging.DEBUG) 
+# 使用最明确、最宽松的CORS配置
+CORS(app, 
+     resources={r"/*": {"origins": "*"}}, 
+     allow_headers="*", 
+     methods="*",
+     supports_credentials=True)
+
+# !!! 关键改动 1: 添加一个全局的请求前处理器来记录所有进入的请求 !!!
+@app.before_request
+def log_each_request():
+    """
+    在每个请求被分派到视图函数之前，记录其详细信息。
+    这是最底层的日志点，可以帮助我们捕获被 CORS 预检等机制拦截的请求。
+    """
+    app.logger.debug("--- [Global Before Request Log] ---")
+    app.logger.debug(f"Request From: {request.remote_addr}")
+    app.logger.debug(f"Request Path: {request.path}")
+    app.logger.debug(f"Request Method: {request.method}")
+    app.logger.debug(f"Request Headers:\n{request.headers}")
+    app.logger.debug("--- [End Global Before Request Log] ---")
+
+# !!! 关键改动 2: 添加一个全局的响应后处理器来记录响应头 !!!
+@app.after_request
+def after_request_func(response):
+    """
+    在每个响应发送回客户端之前，记录其详细信息。
+    这对于调试CORS响应头至关重要。
+    """
+    app.logger.debug("--- [Global After Request Log] ---")
+    app.logger.debug(f"Response for {request.path}:")
+    app.logger.debug(f"Status: {response.status}")
+    app.logger.debug(f"Headers:\n{response.headers}")
+    app.logger.debug("--- [End Global After Request Log] ---")
+    return response
 
 # --- 模型缓存和目录配置 ---
 MODEL_CACHE = {}
@@ -28,20 +62,22 @@ VALID_API_KEY = os.environ.get("MY_API_KEY", "a_default_key_for_testing")
 def require_api_key(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if request.method == 'OPTIONS':
-            return Response(status=200)
+        # 预检请求由 Flask-CORS 自动处理，此处不再需要检查 OPTIONS
         
         auth_header = request.headers.get('Authorization')
         api_key = None
         if auth_header and auth_header.startswith('Bearer '):
             api_key = auth_header.split(' ')[1]
         else:
+            # 兼容旧的 X-API-Key
             api_key = request.headers.get('X-API-Key')
 
         if not api_key or api_key != VALID_API_KEY:
+            app.logger.warning(f"API Key authentication failed for {request.path}. Provided Key: '{api_key}'")
             return jsonify({
                 "error": {"message": "Incorrect API key provided.", "type": "invalid_request_error", "code": "invalid_api_key"}
             }), 401
+        
         return f(*args, **kwargs)
     return decorated_function
 
@@ -75,6 +111,20 @@ def get_model(model_name):
 
 # --- OpenAI 兼容 API 端点 ---
 
+# !!! 关键改动 3: 恢复对连通性检查端点的 API Key 认证 !!!
+@app.route('/v1', methods=['GET', 'POST', 'HEAD'])
+@require_api_key
+def v1_health_check():
+    """
+    为 LobeChat 等客户端提供一个简单的连通性检查端点。
+    """
+    app.logger.info("--- [Connectivity Check Endpoint Hit & Authenticated] ---")
+    app.logger.info(f"Method: {request.method}")
+    app.logger.info("--- [End Connectivity Check Log] ---")
+    
+    # 返回一个 OpenAI 风格的空列表，以满足客户端的格式期望
+    return jsonify({"object": "list", "data": []})
+
 @app.route('/v1/models', methods=['GET'])
 @require_api_key
 def list_models():
@@ -84,16 +134,19 @@ def list_models():
     try:
         model_basenames = set()
         for directory in MODELS_DIR:
-            if not os.path.isdir(directory): continue
+            if not os.path.isdir(directory):
+                app.logger.warning(f"模型目录 '{directory}' 未找到，将被跳过。")
+                continue
+            
             search_pattern = os.path.join(directory, '**', '*.pt')
             for path in glob.glob(search_pattern, recursive=True):
                 model_basenames.add(os.path.basename(path))
         
         model_list = [{"id": name, "object": "model", "owned_by": "user", "permission": []} for name in sorted(list(model_basenames))]
-        app.logger.info(f"返回模型列表: {model_list}")
+        app.logger.info(f"返回模型列表: {len(model_list)} 个模型")
         return jsonify({"object": "list", "data": model_list})
     except Exception as e:
-        app.logger.error(f"列出模型时出错: {e}")
+        app.logger.error(f"列出模型时出错: {e}", exc_info=True)
         return jsonify({"error": {"message": "无法列出模型。", "type": "server_error"}}), 500
 
 @app.route('/v1/chat/completions', methods=['POST'])
@@ -157,12 +210,10 @@ def chat_completions():
         app.logger.error(f"推理过程中发生错误: {e}", exc_info=True)
         return jsonify({"error": {"message": "服务器内部错误。", "type": "server_error"}}), 500
 
-# --- Web 界面路由 (已修复) ---
+# --- Web 界面路由 ---
 @app.route("/")
 def hello():
-    """
-    !!! 关键改动: 恢复渲染 index.html !!!
-    """
+    app.logger.info("--- [View Function] Rendering index.html ---")
     return render_template('index.html') 
 
 # --- 应用启动 ---
