@@ -16,6 +16,9 @@ class ModelInterface {
     this.maxTokensInput = document.getElementById("max-tokens-input");
     this.temperatureInput = document.getElementById("temperature-input");
     this.topKInput = document.getElementById("top-k-input");
+    this.topPInput = document.getElementById("top-p-input");
+    this.presencePenaltyInput = document.getElementById("presence-penalty-input");
+    this.frequencyPenaltyInput = document.getElementById("frequency-penalty-input");
     this.apiKeyInput = document.getElementById("api-key-input");
     this.modelSelect = document.getElementById("model-select");
     this.apiBaseUrlInput = document.getElementById("api-base-url-input");
@@ -116,6 +119,9 @@ class ModelInterface {
     const maxTokens = parseInt(this.maxTokensInput.value, 10) || 150;
     const temperature = parseFloat(this.temperatureInput.value) || 0.7;
     const topK = parseInt(this.topKInput.value, 10) || 50;
+    const topP = parseFloat(this.topPInput.value) || 0.9;
+    const presencePenalty = parseFloat(this.presencePenaltyInput.value) || 0.0;
+    const frequencyPenalty = parseFloat(this.frequencyPenaltyInput.value) || 0.0;
     const apiKey = this.apiKeyInput.value;
     const modelName = this.modelSelect.value;
     const baseUrl = this.getApiBaseUrl();
@@ -145,6 +151,9 @@ class ModelInterface {
         max_tokens: maxTokens,
         temperature: temperature,
         top_k: topK,
+        top_p: topP,
+        presence_penalty: presencePenalty,
+        frequency_penalty: frequencyPenalty,
       };
 
       const completionsUrl = `${baseUrl}/v1/chat/completions`;

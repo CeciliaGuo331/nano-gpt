@@ -4,7 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GPT-2 模型推理</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
   </head>
   <body>
     <div class="container">
@@ -27,12 +30,45 @@
           <input type="number" id="max-tokens-input" value="150" />
         </div>
         <div class="param-group">
-          <label for="temperature-input">温度 (Temperature)</label>
+          <label for="temperature-input">随机度 (Temperature)</label>
           <input type="number" id="temperature-input" value="0.7" step="0.1" />
         </div>
         <div class="param-group">
-          <label for="top-k-input">Top-K 采样</label>
+          <label for="top-k-input">词汇限制 (Top-K)</label>
           <input type="number" id="top-k-input" value="50" />
+        </div>
+        <div class="param-group">
+          <label for="top-p-input">核采样 (Top-P)</label>
+          <input
+            type="number"
+            id="top-p-input"
+            value="0.9"
+            step="0.1"
+            min="0"
+            max="1"
+          />
+        </div>
+        <div class="param-group">
+          <label for="presence-penalty-input">话题惩罚 (Presence Penalty)</label>
+          <input
+            type="number"
+            id="presence-penalty-input"
+            value="0.0"
+            step="0.1"
+            min="-2"
+            max="2"
+          />
+        </div>
+        <div class="param-group">
+          <label for="frequency-penalty-input">重复惩罚 (Frequency Penalty)</label>
+          <input
+            type="number"
+            id="frequency-penalty-input"
+            value="0.0"
+            step="0.1"
+            min="-2"
+            max="2"
+          />
         </div>
       </div>
 

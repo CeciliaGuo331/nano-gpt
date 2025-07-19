@@ -186,11 +186,16 @@ def chat_completions():
         max_tokens = int(data.get('max_tokens', 150))
         temperature = float(data.get('temperature', 0.7))
         top_k = int(data.get('top_k', 50))
+        top_p = float(data.get('top_p', 0.9))
+        presence_penalty = float(data.get('presence_penalty', 0.0))
+        frequency_penalty = float(data.get('frequency_penalty', 0.0))
         
-        # 确保temperature在合理范围内，避免数值问题
+        # 确保参数在合理范围内，避免数值问题
         temperature = max(0.1, min(temperature, 2.0))
-        # 确保top_k在合理范围内
         top_k = max(1, min(top_k, 100))
+        top_p = max(0.0, min(top_p, 1.0))
+        presence_penalty = max(-2.0, min(presence_penalty, 2.0))
+        frequency_penalty = max(-2.0, min(frequency_penalty, 2.0))
         
         assets = get_model(model_name)
         tokens = assets['tokenizer'].encode(prompt)
@@ -201,7 +206,10 @@ def chat_completions():
                 tokens, 
                 max_new_tokens=max_tokens, 
                 temperature=temperature,
-                top_k=top_k
+                top_k=top_k,
+                top_p=top_p,
+                presence_penalty=presence_penalty,
+                frequency_penalty=frequency_penalty
             )
             # 只解码新生成的token，不包括输入的prompt
             new_tokens = generated_tokens[0][len(tokens[0]):]
@@ -234,6 +242,7 @@ def chat_completions():
             }
         }
         
+        app.logger.info(f"生成参数 - max_tokens: {max_tokens}, temperature: {temperature}, top_k: {top_k}, top_p: {top_p}, presence_penalty: {presence_penalty}, frequency_penalty: {frequency_penalty}")
         app.logger.info(f"生成响应 - prompt: '{prompt}', response: '{generated_text}'")
         app.logger.info(f"响应长度: {len(generated_text)} 字符")
         app.logger.info(f"流式响应: {stream}")

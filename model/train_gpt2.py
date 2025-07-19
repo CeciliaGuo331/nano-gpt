@@ -247,13 +247,28 @@ class GPT(nn.Module):
         return optimizer
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, top_p=0.9, 
+                 presence_penalty=0.0, frequency_penalty=0.0):
         """
         从一个初始的 token 序列 idx (形状: B, T) 开始，生成后续的 token。
+        
+        参数:
+        - idx: 输入token序列 (B, T)
+        - max_new_tokens: 生成的最大token数
+        - temperature: 温度参数，控制随机性
+        - top_k: Top-K采样，从概率最高的k个token中采样
+        - top_p: 核采样，从累积概率达到p的token集合中采样
+        - presence_penalty: 存在惩罚，减少重复话题
+        - frequency_penalty: 频率惩罚，根据频率减少重复词汇
         """
         # 确保模型处于评估模式
         self.eval()
-        for _ in range(max_new_tokens):
+        
+        # 记录已生成的token及其频率，用于惩罚计算
+        generated_tokens = {}  # {token_id: count}
+        original_length = idx.size(1)
+        
+        for step in range(max_new_tokens):
             # 如果当前序列长度超过了模型的上下文长度，就截取最后 block_size 个 token
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             
@@ -263,10 +278,48 @@ class GPT(nn.Module):
             # 只关注最后一个时间步的 logits
             logits = logits[:, -1, :] / temperature
             
-            # 可选：应用 top-k 截断
-            if top_k is not None:
+            # 应用presence_penalty和frequency_penalty
+            if presence_penalty != 0.0 or frequency_penalty != 0.0:
+                # 获取已生成的token（不包括原始输入）
+                if idx.size(1) > original_length:
+                    generated_sequence = idx[0, original_length:].tolist()
+                    
+                    # 统计频率
+                    for token_id in generated_sequence:
+                        generated_tokens[token_id] = generated_tokens.get(token_id, 0) + 1
+                    
+                    # 应用惩罚
+                    for token_id, count in generated_tokens.items():
+                        if token_id < logits.size(-1):  # 确保token_id在词汇表范围内
+                            # presence_penalty: 对出现过的token施加固定惩罚
+                            if presence_penalty != 0.0:
+                                logits[0, token_id] -= presence_penalty
+                            
+                            # frequency_penalty: 根据出现频率施加惩罚
+                            if frequency_penalty != 0.0:
+                                logits[0, token_id] -= frequency_penalty * count
+            
+            # 应用top_k截断
+            if top_k is not None and top_k > 0:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float('Inf')
+            
+            # 应用top_p核采样
+            if top_p < 1.0:
+                # 获取排序后的logits和索引
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                # 计算累积概率
+                cumulative_probs = torch.cumsum(torch.nn.functional.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # 找到累积概率超过top_p的位置
+                sorted_indices_to_remove = cumulative_probs > top_p
+                # 保留第一个超过阈值的token（移位以保留边界）
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                
+                # 创建掩码并应用
+                indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+                logits[indices_to_remove] = -float('Inf')
             
             # 应用 softmax 得到概率分布
             probs = torch.nn.functional.softmax(logits, dim=-1)
