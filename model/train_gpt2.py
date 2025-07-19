@@ -248,7 +248,7 @@ class GPT(nn.Module):
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, top_p=0.9, 
-                 presence_penalty=0.0, frequency_penalty=0.0):
+                 presence_penalty=0.0, frequency_penalty=0.0, stream=False, stream_callback=None):
         """
         从一个初始的 token 序列 idx (形状: B, T) 开始，生成后续的 token。
         
@@ -260,6 +260,8 @@ class GPT(nn.Module):
         - top_p: 核采样，从累积概率达到p的token集合中采样
         - presence_penalty: 存在惩罚，减少重复话题
         - frequency_penalty: 频率惩罚，根据频率减少重复词汇
+        - stream: 是否启用流式生成
+        - stream_callback: 流式生成的回调函数，接收每个新生成的token
         """
         # 确保模型处于评估模式
         self.eval()
@@ -329,6 +331,11 @@ class GPT(nn.Module):
             
             # 将新采样的 token 拼接到序列的末尾
             idx = torch.cat((idx, idx_next), dim=1)
+            
+            # 如果启用流式生成，调用回调函数
+            if stream and stream_callback:
+                new_token_id = idx_next[0, 0].item()
+                stream_callback(new_token_id, step)
 
         # 恢复到训练模式
         self.train()

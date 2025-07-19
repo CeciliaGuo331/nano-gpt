@@ -201,79 +201,123 @@ def chat_completions():
         tokens = assets['tokenizer'].encode(prompt)
         tokens = torch.tensor(tokens, dtype=torch.long, device=assets['device']).unsqueeze(0)
         
-        with torch.no_grad():
-            generated_tokens = assets['model'].generate(
-                tokens, 
-                max_new_tokens=max_tokens, 
-                temperature=temperature,
-                top_k=top_k,
-                top_p=top_p,
-                presence_penalty=presence_penalty,
-                frequency_penalty=frequency_penalty
-            )
-            # 只解码新生成的token，不包括输入的prompt
-            new_tokens = generated_tokens[0][len(tokens[0]):]
-            generated_text = assets['tokenizer'].decode(new_tokens.tolist())
-
-        # 清理生成的文本，确保格式正确
-        generated_text = generated_text.strip()
-        
-        # 如果生成的文本为空，提供默认回复
-        if not generated_text:
-            generated_text = "抱歉，我无法生成有意义的回复。请尝试不同的提示词。"
-        
-        response = {
-            "id": f"chatcmpl-{uuid.uuid4()}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": model_name,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": generated_text
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": len(tokens[0]),
-                "completion_tokens": len(new_tokens),
-                "total_tokens": len(tokens[0]) + len(new_tokens)
-            }
-        }
-        
-        app.logger.info(f"生成参数 - max_tokens: {max_tokens}, temperature: {temperature}, top_k: {top_k}, top_p: {top_p}, presence_penalty: {presence_penalty}, frequency_penalty: {frequency_penalty}")
-        app.logger.info(f"生成响应 - prompt: '{prompt}', response: '{generated_text}'")
-        app.logger.info(f"响应长度: {len(generated_text)} 字符")
-        app.logger.info(f"流式响应: {stream}")
-        
         # 根据请求类型返回不同格式的响应
         if stream:
-            # 返回流式响应格式
+            # 真正的流式生成
             def generate_stream():
                 import json
+                import time
                 
-                # 开始流式响应
-                chunk_data = {
+                # 用于收集流式生成的tokens
+                stream_tokens = []
+                
+                def stream_callback(token_id, step):
+                    """流式生成回调函数"""
+                    stream_tokens.append(token_id)
+                    # 解码当前token
+                    try:
+                        token_text = assets['tokenizer'].decode([token_id])
+                        # 发送增量内容
+                        chunk_data = {
+                            "id": f"chatcmpl-{uuid.uuid4()}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": model_name,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": token_text},
+                                "finish_reason": None
+                            }]
+                        }
+                        return f"data: {json.dumps(chunk_data)}\n\n"
+                    except:
+                        # 如果单个token无法解码，跳过
+                        return ""
+                
+                # 开始流式生成
+                start_chunk = {
                     "id": f"chatcmpl-{uuid.uuid4()}",
                     "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": model_name,
                     "choices": [{
                         "index": 0,
-                        "delta": {
-                            "role": "assistant",
-                            "content": generated_text
-                        },
+                        "delta": {"role": "assistant", "content": ""},
                         "finish_reason": None
                     }]
                 }
-                yield f"data: {json.dumps(chunk_data)}\n\n"
+                yield f"data: {json.dumps(start_chunk)}\n\n"
                 
-                # 结束流式响应
+                # 执行真正的流式生成
+                with torch.no_grad():
+                    current_tokens = tokens.clone()
+                    for step in range(max_tokens):
+                        # 生成单个token
+                        generated_tokens = assets['model'].generate(
+                            current_tokens,
+                            max_new_tokens=1,
+                            temperature=temperature,
+                            top_k=top_k,
+                            top_p=top_p,
+                            presence_penalty=presence_penalty,
+                            frequency_penalty=frequency_penalty,
+                            stream=True,
+                            stream_callback=None  # 我们手动处理流式输出
+                        )
+                        
+                        # 获取新生成的token
+                        new_token = generated_tokens[0, -1:].tolist()
+                        if new_token:
+                            new_token_id = new_token[0]
+                            stream_tokens.append(new_token_id)
+                            
+                            # 尝试解码新token
+                            try:
+                                token_text = assets['tokenizer'].decode([new_token_id])
+                                chunk_data = {
+                                    "id": f"chatcmpl-{uuid.uuid4()}",
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": model_name,
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {"content": token_text},
+                                        "finish_reason": None
+                                    }]
+                                }
+                                yield f"data: {json.dumps(chunk_data)}\n\n"
+                            except:
+                                # 某些token可能无法单独解码，累积几个再试
+                                if len(stream_tokens) >= 3:
+                                    try:
+                                        accumulated_text = assets['tokenizer'].decode(stream_tokens[-3:])
+                                        chunk_data = {
+                                            "id": f"chatcmpl-{uuid.uuid4()}",
+                                            "object": "chat.completion.chunk",
+                                            "created": int(time.time()),
+                                            "model": model_name,
+                                            "choices": [{
+                                                "index": 0,
+                                                "delta": {"content": accumulated_text},
+                                                "finish_reason": None
+                                            }]
+                                        }
+                                        yield f"data: {json.dumps(chunk_data)}\n\n"
+                                        stream_tokens = []  # 清空已发送的tokens
+                                    except:
+                                        pass
+                        
+                        # 更新当前token序列
+                        current_tokens = generated_tokens
+                        
+                        # 检查是否生成了结束token或达到最大长度
+                        if step >= max_tokens - 1:
+                            break
+                
+                # 发送结束chunk
                 final_chunk = {
                     "id": f"chatcmpl-{uuid.uuid4()}",
-                    "object": "chat.completion.chunk", 
+                    "object": "chat.completion.chunk",
                     "created": int(time.time()),
                     "model": model_name,
                     "choices": [{
@@ -283,8 +327,8 @@ def chat_completions():
                     }],
                     "usage": {
                         "prompt_tokens": len(tokens[0]),
-                        "completion_tokens": len(new_tokens),
-                        "total_tokens": len(tokens[0]) + len(new_tokens)
+                        "completion_tokens": len(stream_tokens),
+                        "total_tokens": len(tokens[0]) + len(stream_tokens)
                     }
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
@@ -302,6 +346,53 @@ def chat_completions():
                 }
             )
         else:
+            # 非流式生成（原有逻辑）
+            with torch.no_grad():
+                generated_tokens = assets['model'].generate(
+                    tokens, 
+                    max_new_tokens=max_tokens, 
+                    temperature=temperature,
+                    top_k=top_k,
+                    top_p=top_p,
+                    presence_penalty=presence_penalty,
+                    frequency_penalty=frequency_penalty
+                )
+            # 只解码新生成的token，不包括输入的prompt
+            new_tokens = generated_tokens[0][len(tokens[0]):]
+            generated_text = assets['tokenizer'].decode(new_tokens.tolist())
+
+            # 清理生成的文本，确保格式正确
+            generated_text = generated_text.strip()
+            
+            # 如果生成的文本为空，提供默认回复
+            if not generated_text:
+                generated_text = "抱歉，我无法生成有意义的回复。请尝试不同的提示词。"
+            
+            response = {
+                "id": f"chatcmpl-{uuid.uuid4()}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model_name,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": generated_text
+                    },
+                    "finish_reason": "stop"
+                }],
+                "usage": {
+                    "prompt_tokens": len(tokens[0]),
+                    "completion_tokens": len(new_tokens),
+                    "total_tokens": len(tokens[0]) + len(new_tokens)
+                }
+            }
+            
+            app.logger.info(f"生成参数 - max_tokens: {max_tokens}, temperature: {temperature}, top_k: {top_k}, top_p: {top_p}, presence_penalty: {presence_penalty}, frequency_penalty: {frequency_penalty}")
+            app.logger.info(f"生成响应 - prompt: '{prompt}', response: '{generated_text}'")
+            app.logger.info(f"响应长度: {len(generated_text)} 字符")
+            app.logger.info(f"流式响应: {stream}")
+            
             # 返回非流式响应（原有格式）
             response_obj = jsonify(response)
             response_obj.headers['Content-Type'] = 'application/json; charset=utf-8'
