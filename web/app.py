@@ -4,21 +4,21 @@ import glob
 import logging
 import time
 import uuid
+import json
 from functools import wraps
 
 import torch
 import tiktoken
 from flask import Flask, request, jsonify, render_template, Response
-# from flask_cors import CORS
+# from flask_cors import CORS  # 使用手动CORS处理
 
 from model.train_gpt2 import GPT, GPTConfig
 
 # --- 应用初始化 ---
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.logger.setLevel(logging.INFO)
-# 移除Flask-CORS，完全使用手动CORS处理
-# from flask_cors import CORS
 
+# --- CORS处理 ---
 @app.before_request
 def handle_preflight():
     app.logger.info(f"收到请求: {request.method} {request.url} 来自 {request.remote_addr}")
@@ -297,12 +297,9 @@ def chat_completions():
         app.logger.error(f"推理过程中发生错误: {e}", exc_info=True)
         return jsonify({"error": {"message": "服务器内部错误。", "type": "server_error"}}), 500
 
-# --- Web 界面路由 (已修复) ---
+# --- Web 界面路由 ---
 @app.route("/")
 def hello():
-    """
-    !!! 关键改动: 恢复渲染 index.html !!!
-    """
     return render_template('index.html') 
 
 # --- 应用启动 ---
