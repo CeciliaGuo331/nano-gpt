@@ -9,14 +9,34 @@ from functools import wraps
 import torch
 import tiktoken
 from flask import Flask, request, jsonify, render_template, Response
-from flask_cors import CORS
+# from flask_cors import CORS
 
 from model.train_gpt2 import GPT, GPTConfig
 
 # --- 应用初始化 ---
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.logger.setLevel(logging.INFO)
-CORS(app) 
+# 移除Flask-CORS，完全使用手动CORS处理
+# from flask_cors import CORS
+
+@app.before_request
+def handle_preflight():
+    app.logger.info(f"收到请求: {request.method} {request.url} 来自 {request.remote_addr}")
+    if request.method == "OPTIONS":
+        app.logger.info(f"处理预检请求: {request.url}")
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Max-Age"] = "86400"
+        return response
+
+@app.after_request  
+def after_request(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"  
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    return response 
 
 # --- 模型缓存和目录配置 ---
 MODEL_CACHE = {}
@@ -75,6 +95,32 @@ def get_model(model_name):
 
 # --- OpenAI 兼容 API 端点 ---
 
+@app.route('/v1', methods=['GET', 'POST', 'HEAD'])
+def v1_health_check():
+    app.logger.info(f"连通性检查请求: {request.method} {request.url}")
+    # 返回OpenAI标准的模型列表格式用于连通性检查
+    response = jsonify({
+        "object": "list",
+        "data": [
+            {
+                "id": "gpt-3.5-turbo",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai"
+            }
+        ]
+    })
+    app.logger.info(f"返回响应: {response.get_data(as_text=True)}")
+    return response
+
+@app.route('/v1/health', methods=['GET'])
+def v1_health():
+    return jsonify({"status": "ok", "message": "Server is running"})
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok", "message": "Server is running"})
+
 @app.route('/v1/models', methods=['GET'])
 @require_api_key
 def list_models():
@@ -82,15 +128,18 @@ def list_models():
     提供与 OpenAI /v1/models 兼容的模型列表。
     """
     try:
+        app.logger.info(f"模型列表请求来自: {request.remote_addr}")
         model_basenames = set()
         for directory in MODELS_DIR:
-            if not os.path.isdir(directory): continue
+            if not os.path.isdir(directory): 
+                app.logger.warning(f"模型目录 '{directory}' 未找到，将被跳过。")
+                continue
             search_pattern = os.path.join(directory, '**', '*.pt')
             for path in glob.glob(search_pattern, recursive=True):
                 model_basenames.add(os.path.basename(path))
         
         model_list = [{"id": name, "object": "model", "owned_by": "user", "permission": []} for name in sorted(list(model_basenames))]
-        app.logger.info(f"返回模型列表: {model_list}")
+        app.logger.info(f"返回模型列表: {len(model_list)} 个模型给 {request.remote_addr}")
         return jsonify({"object": "list", "data": model_list})
     except Exception as e:
         app.logger.error(f"列出模型时出错: {e}")
@@ -122,13 +171,23 @@ def chat_completions():
         max_tokens = int(data.get('max_tokens', 150))
         temperature = float(data.get('temperature', 0.7))
         
+        # 确保temperature在合理范围内，避免数值问题
+        temperature = max(0.1, min(temperature, 2.0))
+        
         assets = get_model(model_name)
         tokens = assets['tokenizer'].encode(prompt)
         tokens = torch.tensor(tokens, dtype=torch.long, device=assets['device']).unsqueeze(0)
         
         with torch.no_grad():
-            generated_tokens = assets['model'].generate(tokens, max_new_tokens=max_tokens, temperature=temperature)
-            generated_text = assets['tokenizer'].decode(generated_tokens[0].tolist())
+            generated_tokens = assets['model'].generate(
+                tokens, 
+                max_new_tokens=max_tokens, 
+                temperature=temperature,
+                # top_k=50  # 添加top_k参数增加稳定性
+            )
+            # 只解码新生成的token，不包括输入的prompt
+            new_tokens = generated_tokens[0][len(tokens[0]):]
+            generated_text = assets['tokenizer'].decode(new_tokens.tolist())
 
         response = {
             "id": f"chatcmpl-{uuid.uuid4()}",
@@ -139,17 +198,26 @@ def chat_completions():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": generated_text
+                    "content": generated_text.strip()  # 去除首尾空白字符
                 },
                 "finish_reason": "stop"
             }],
             "usage": {
                 "prompt_tokens": len(tokens[0]),
-                "completion_tokens": len(generated_tokens[0]) - len(tokens[0]),
-                "total_tokens": len(generated_tokens[0])
+                "completion_tokens": len(new_tokens),
+                "total_tokens": len(tokens[0]) + len(new_tokens)
             }
         }
-        return jsonify(response)
+        
+        app.logger.info(f"生成响应 - prompt: '{prompt}', response: '{generated_text}'")
+        app.logger.info(f"响应长度: {len(generated_text)} 字符")
+        app.logger.info(f"完整响应JSON: {response}")
+        
+        # 确保正确的Content-Type
+        response_obj = jsonify(response)
+        response_obj.headers['Content-Type'] = 'application/json; charset=utf-8'
+        response_obj.headers['Content-Length'] = str(len(response_obj.get_data()))
+        return response_obj
 
     except FileNotFoundError as e:
         return jsonify({"error": {"message": str(e), "type": "invalid_request_error", "code": "model_not_found"}}), 404

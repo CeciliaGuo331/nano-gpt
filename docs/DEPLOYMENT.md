@@ -77,7 +77,11 @@ MODEL_CHECKPOINT=log/model_40000.pt python web/app.py
 **示例命令**
 
 ```bash
-# 将 a_default_key_for_testing 替换为你的 API Key
+# 获取模型列表
+curl -X GET http://localhost:5002/v1/models \
+     -H "Authorization: Bearer a_default_key_for_testing"
+
+# 聊天补全请求
 curl -X POST http://localhost:5002/v1/chat/completions \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer a_default_key_for_testing" \
@@ -92,16 +96,34 @@ curl -X POST http://localhost:5002/v1/chat/completions \
            "max_tokens": 100,
            "temperature": 0.7
          }'
+
+# 连通性检查
+curl -X GET http://localhost:5002/v1 \
+     -H "Authorization: Bearer a_default_key_for_testing"
 ```
 
 **成功响应示例** (`200 OK`)
 
 ```json
 {
-  "status": "success",
-  "data": {
-    "prompt": "你好，世界",
-    "generated_text": "你好，世界，这是一个美好的日子..."
+  "choices": [
+    {
+      "finish_reason": "stop",
+      "index": 0,
+      "message": {
+        "content": "We are on the verge of the end of the year and the time to start our own day, and I look forward to being there for you!",
+        "role": "assistant"
+      }
+    }
+  ],
+  "created": 1752905271,
+  "id": "chatcmpl-5b5e6aaa-bae1-4761-8ba5-f6dd94785aea",
+  "model": "latest_checkpoint.pt",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 100,
+    "prompt_tokens": 4,
+    "total_tokens": 104
   }
 }
 ```
