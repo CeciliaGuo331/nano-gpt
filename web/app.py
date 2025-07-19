@@ -75,10 +75,15 @@ def find_model_full_path(model_name):
     return None
 
 def get_model(model_name):
-    if model_name in MODEL_CACHE: return MODEL_CACHE[model_name]
+    if model_name in MODEL_CACHE: 
+        app.logger.info(f"从缓存加载模型 '{model_name}'")
+        return MODEL_CACHE[model_name]
+    
     app.logger.info(f"从磁盘加载模型 '{model_name}'...")
     checkpoint_path = find_model_full_path(model_name)
-    if not checkpoint_path: raise FileNotFoundError(f"在配置的目录中未找到模型文件: {model_name}")
+    if not checkpoint_path: 
+        raise FileNotFoundError(f"在配置的目录中未找到模型文件: {model_name}")
+    
     app.logger.info(f"找到模型路径: {checkpoint_path}")
     device = 'cpu'
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
@@ -90,7 +95,7 @@ def get_model(model_name):
     enc = tiktoken.get_encoding('gpt2')
     model_assets = {'model': model, 'tokenizer': enc, 'device': device}
     MODEL_CACHE[model_name] = model_assets
-    app.logger.info(f"模型 '{model_name}' 加载并缓存成功")
+    app.logger.info(f"模型 '{model_name}' 加载并缓存成功，缓存大小: {len(MODEL_CACHE)}")
     return model_assets
 
 # --- OpenAI 兼容 API 端点 ---
