@@ -126,6 +126,12 @@ textarea:focus {
   }
 }
 
+@media (min-width: 768px) {
+  .param-grid {
+    grid-template-columns: 1fr 1fr 1fr;
+  }
+}
+
 .param-group {
   display: flex;
   flex-direction: column;

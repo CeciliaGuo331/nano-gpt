@@ -185,9 +185,12 @@ def chat_completions():
 
         max_tokens = int(data.get('max_tokens', 150))
         temperature = float(data.get('temperature', 0.7))
+        top_k = int(data.get('top_k', 50))
         
         # 确保temperature在合理范围内，避免数值问题
         temperature = max(0.1, min(temperature, 2.0))
+        # 确保top_k在合理范围内
+        top_k = max(1, min(top_k, 100))
         
         assets = get_model(model_name)
         tokens = assets['tokenizer'].encode(prompt)
@@ -198,7 +201,7 @@ def chat_completions():
                 tokens, 
                 max_new_tokens=max_tokens, 
                 temperature=temperature,
-                # top_k=50  # 添加top_k参数增加稳定性
+                top_k=top_k
             )
             # 只解码新生成的token，不包括输入的prompt
             new_tokens = generated_tokens[0][len(tokens[0]):]

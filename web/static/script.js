@@ -15,6 +15,7 @@ class ModelInterface {
     this.resultDiv = document.getElementById("result");
     this.maxTokensInput = document.getElementById("max-tokens-input");
     this.temperatureInput = document.getElementById("temperature-input");
+    this.topKInput = document.getElementById("top-k-input");
     this.apiKeyInput = document.getElementById("api-key-input");
     this.modelSelect = document.getElementById("model-select");
     this.apiBaseUrlInput = document.getElementById("api-base-url-input");
@@ -114,6 +115,7 @@ class ModelInterface {
     const promptText = this.promptInput.value;
     const maxTokens = parseInt(this.maxTokensInput.value, 10) || 150;
     const temperature = parseFloat(this.temperatureInput.value) || 0.7;
+    const topK = parseInt(this.topKInput.value, 10) || 50;
     const apiKey = this.apiKeyInput.value;
     const modelName = this.modelSelect.value;
     const baseUrl = this.getApiBaseUrl();
@@ -142,6 +144,7 @@ class ModelInterface {
         messages: [{ role: "user", content: promptText }],
         max_tokens: maxTokens,
         temperature: temperature,
+        top_k: topK,
       };
 
       const completionsUrl = `${baseUrl}/v1/chat/completions`;
