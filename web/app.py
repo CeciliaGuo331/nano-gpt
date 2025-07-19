@@ -98,20 +98,24 @@ def get_model(model_name):
 @app.route('/v1', methods=['GET', 'POST', 'HEAD'])
 def v1_health_check():
     app.logger.info(f"连通性检查请求: {request.method} {request.url}")
-    # 返回OpenAI标准的模型列表格式用于连通性检查
+    app.logger.info(f"请求头: {dict(request.headers)}")
+    
+    # 返回简单的健康状态，符合大多数OpenAI客户端期望
     response = jsonify({
-        "object": "list",
-        "data": [
-            {
-                "id": "gpt-3.5-turbo",
-                "object": "model",
-                "created": 1677610602,
-                "owned_by": "openai"
-            }
-        ]
+        "status": "ok",
+        "version": "v1"
     })
     app.logger.info(f"返回响应: {response.get_data(as_text=True)}")
     return response
+
+# 添加更多可能的连通性检查端点
+@app.route('/', methods=['HEAD'])
+def head_root():
+    return Response(status=200)
+
+@app.route('/v1/engines', methods=['GET'])
+def list_engines():
+    return jsonify({"data": [], "object": "list"})
 
 @app.route('/v1/health', methods=['GET'])
 def v1_health():
@@ -152,9 +156,15 @@ def chat_completions():
     提供与 OpenAI /v1/chat/completions 兼容的聊天端点。
     """
     try:
+        app.logger.info(f"聊天请求来自: {request.remote_addr}")
+        app.logger.info(f"请求头: {dict(request.headers)}")
+        
         data = request.get_json()
+        app.logger.info(f"请求数据: {data}")
+        
         model_name = data.get('model')
         messages = data.get('messages')
+        stream = data.get('stream', False)  # 检查是否需要流式响应
         
         if not model_name or not messages:
             return jsonify({"error": {"message": "请求参数 'model' 和 'messages' 是必需的。", "type": "invalid_request_error"}}), 400
@@ -189,6 +199,13 @@ def chat_completions():
             new_tokens = generated_tokens[0][len(tokens[0]):]
             generated_text = assets['tokenizer'].decode(new_tokens.tolist())
 
+        # 清理生成的文本，确保格式正确
+        generated_text = generated_text.strip()
+        
+        # 如果生成的文本为空，提供默认回复
+        if not generated_text:
+            generated_text = "抱歉，我无法生成有意义的回复。请尝试不同的提示词。"
+        
         response = {
             "id": f"chatcmpl-{uuid.uuid4()}",
             "object": "chat.completion",
@@ -198,7 +215,7 @@ def chat_completions():
                 "index": 0,
                 "message": {
                     "role": "assistant",
-                    "content": generated_text.strip()  # 去除首尾空白字符
+                    "content": generated_text
                 },
                 "finish_reason": "stop"
             }],
@@ -211,13 +228,68 @@ def chat_completions():
         
         app.logger.info(f"生成响应 - prompt: '{prompt}', response: '{generated_text}'")
         app.logger.info(f"响应长度: {len(generated_text)} 字符")
-        app.logger.info(f"完整响应JSON: {response}")
+        app.logger.info(f"流式响应: {stream}")
         
-        # 确保正确的Content-Type
-        response_obj = jsonify(response)
-        response_obj.headers['Content-Type'] = 'application/json; charset=utf-8'
-        response_obj.headers['Content-Length'] = str(len(response_obj.get_data()))
-        return response_obj
+        # 根据请求类型返回不同格式的响应
+        if stream:
+            # 返回流式响应格式
+            def generate_stream():
+                import json
+                
+                # 开始流式响应
+                chunk_data = {
+                    "id": f"chatcmpl-{uuid.uuid4()}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": model_name,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "role": "assistant",
+                            "content": generated_text
+                        },
+                        "finish_reason": None
+                    }]
+                }
+                yield f"data: {json.dumps(chunk_data)}\n\n"
+                
+                # 结束流式响应
+                final_chunk = {
+                    "id": f"chatcmpl-{uuid.uuid4()}",
+                    "object": "chat.completion.chunk", 
+                    "created": int(time.time()),
+                    "model": model_name,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {
+                        "prompt_tokens": len(tokens[0]),
+                        "completion_tokens": len(new_tokens),
+                        "total_tokens": len(tokens[0]) + len(new_tokens)
+                    }
+                }
+                yield f"data: {json.dumps(final_chunk)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return Response(
+                generate_stream(),
+                mimetype='text/event-stream',
+                headers={
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': '*',
+                    'Access-Control-Allow-Methods': '*'
+                }
+            )
+        else:
+            # 返回非流式响应（原有格式）
+            response_obj = jsonify(response)
+            response_obj.headers['Content-Type'] = 'application/json; charset=utf-8'
+            response_obj.headers['Content-Length'] = str(len(response_obj.get_data()))
+            return response_obj
 
     except FileNotFoundError as e:
         return jsonify({"error": {"message": str(e), "type": "invalid_request_error", "code": "model_not_found"}}), 404
