@@ -22,6 +22,11 @@ class ModelInterface {
     this.apiKeyInput = document.getElementById("api-key-input");
     this.modelSelect = document.getElementById("model-select");
     this.apiBaseUrlInput = document.getElementById("api-base-url-input");
+    this.streamCheckbox = document.getElementById("stream-checkbox");
+    
+    // 用于流式生成的状态
+    this.isGenerating = false;
+    this.eventSource = null;
   }
 
   bindEvents() {
@@ -125,6 +130,7 @@ class ModelInterface {
     const apiKey = this.apiKeyInput.value;
     const modelName = this.modelSelect.value;
     const baseUrl = this.getApiBaseUrl();
+    const enableStream = this.streamCheckbox.checked;
 
     // 验证输入
     if (!promptText.trim()) {
@@ -140,22 +146,39 @@ class ModelInterface {
       return;
     }
 
+    // 如果正在生成，先停止
+    if (this.isGenerating) {
+      this.stopGeneration();
+      return;
+    }
+
     // 设置加载状态
     this.setLoadingState(true);
     this.clearResult();
 
-    try {
-      const requestBody = {
-        model: modelName,
-        messages: [{ role: "user", content: promptText }],
-        max_tokens: maxTokens,
-        temperature: temperature,
-        top_k: topK,
-        top_p: topP,
-        presence_penalty: presencePenalty,
-        frequency_penalty: frequencyPenalty,
-      };
+    const requestBody = {
+      model: modelName,
+      messages: [{ role: "user", content: promptText }],
+      max_tokens: maxTokens,
+      temperature: temperature,
+      top_k: topK,
+      top_p: topP,
+      presence_penalty: presencePenalty,
+      frequency_penalty: frequencyPenalty,
+      stream: enableStream,
+    };
 
+    if (enableStream) {
+      // 使用流式生成
+      this.generateStream(baseUrl, apiKey, requestBody);
+    } else {
+      // 使用传统生成
+      this.generateNonStream(baseUrl, apiKey, requestBody);
+    }
+  }
+
+  async generateNonStream(baseUrl, apiKey, requestBody) {
+    try {
       const completionsUrl = `${baseUrl}/v1/chat/completions`;
       console.log(`发送生成请求到 ${completionsUrl}`);
 
@@ -190,7 +213,110 @@ class ModelInterface {
     }
   }
 
+  generateStream(baseUrl, apiKey, requestBody) {
+    try {
+      const completionsUrl = `${baseUrl}/v1/chat/completions`;
+      console.log(`发送流式生成请求到 ${completionsUrl}`);
+
+      // 构建POST请求的fetch调用，但使用ReadableStream处理响应
+      fetch(completionsUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify(requestBody),
+      })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP 错误! 状态码: ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          // 读取流数据
+          const readStream = () => {
+            reader
+              .read()
+              .then(({ done, value }) => {
+                if (done) {
+                  console.log("流式生成完成");
+                  this.setLoadingState(false);
+                  return;
+                }
+
+                // 解码新数据并添加到缓冲区
+                buffer += decoder.decode(value, { stream: true });
+
+                // 处理缓冲区中的完整行
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || ""; // 保留不完整的行
+
+                for (const line of lines) {
+                  this.processStreamLine(line.trim());
+                }
+
+                // 继续读取
+                readStream();
+              })
+              .catch((error) => {
+                console.error("流读取错误:", error);
+                this.showError("流式生成错误: " + error.message);
+                this.setLoadingState(false);
+              });
+          };
+
+          readStream();
+        })
+        .catch((error) => {
+          console.error("流式请求错误:", error);
+          this.showError("发生错误: " + error.message);
+          this.setLoadingState(false);
+        });
+    } catch (error) {
+      console.error("流式生成初始化错误:", error);
+      this.showError("发生错误: " + error.message);
+      this.setLoadingState(false);
+    }
+  }
+
+  processStreamLine(line) {
+    if (!line || line === "data: [DONE]") {
+      return;
+    }
+
+    if (line.startsWith("data: ")) {
+      try {
+        const jsonData = line.substring(6); // 移除 "data: " 前缀
+        const chunk = JSON.parse(jsonData);
+
+        if (chunk.choices && chunk.choices[0] && chunk.choices[0].delta) {
+          const delta = chunk.choices[0].delta;
+          if (delta.content) {
+            // 追加新内容到结果区域
+            this.appendResult(delta.content);
+          }
+        }
+      } catch (error) {
+        console.error("解析流数据错误:", error, "原始数据:", line);
+      }
+    }
+  }
+
+  stopGeneration() {
+    this.isGenerating = false;
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+    }
+    this.setLoadingState(false);
+  }
+
   setLoadingState(loading) {
+    this.isGenerating = loading;
     this.generateButton.disabled = loading;
     this.buttonText.innerHTML = loading 
       ? '<span class="spinner"></span>正在生成...' 
@@ -205,6 +331,19 @@ class ModelInterface {
   showResult(text) {
     this.resultDiv.textContent = text;
     this.resultDiv.classList.remove("error");
+  }
+
+  appendResult(text) {
+    // 流式生成时追加内容
+    if (!this.resultDiv.textContent) {
+      this.resultDiv.textContent = text;
+    } else {
+      this.resultDiv.textContent += text;
+    }
+    this.resultDiv.classList.remove("error");
+    
+    // 自动滚动到底部
+    this.resultDiv.scrollTop = this.resultDiv.scrollHeight;
   }
 
   showError(message) {
