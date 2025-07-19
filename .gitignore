@@ -12,3 +12,5 @@ docs/*.txt
 REPORT.md
 
 .VSCodeCounter/
+
+*.npy
