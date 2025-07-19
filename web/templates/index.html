@@ -1,110 +1,119 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GPT-2 模型推理</title>
-    <link
-      rel="stylesheet"
-      href="{{ url_for('static', filename='style.css') }}"
-    />
-  </head>
-  <body>
-    <div class="container">
-      <h1>GPT-2 模型推理</h1>
-      <textarea
-        id="prompt-input"
-        placeholder="在这里输入你的提示词..."
-      ></textarea>
-
-      <div class="form-group">
-        <label for="model-select">选择模型</label>
-        <select id="model-select">
-          <option value="">请提供有效的 API 地址和 Key</option>
-        </select>
-      </div>
-
-      <div class="param-grid">
-        <div class="param-group">
-          <label for="max-tokens-input">最大长度 (Max Tokens)</label>
-          <input type="number" id="max-tokens-input" value="150" />
-        </div>
-        <div class="param-group">
-          <label for="temperature-input">随机度 (Temperature)</label>
-          <input type="number" id="temperature-input" value="0.7" step="0.1" />
-        </div>
-        <div class="param-group">
-          <label for="top-k-input">词汇限制 (Top-K)</label>
-          <input type="number" id="top-k-input" value="50" />
-        </div>
-        <div class="param-group">
-          <label for="top-p-input">核采样 (Top-P)</label>
-          <input
-            type="number"
-            id="top-p-input"
-            value="0.9"
-            step="0.1"
-            min="0"
-            max="1"
-          />
-        </div>
-        <div class="param-group">
-          <label for="presence-penalty-input">话题惩罚 (Presence Penalty)</label>
-          <input
-            type="number"
-            id="presence-penalty-input"
-            value="0.0"
-            step="0.1"
-            min="-2"
-            max="2"
-          />
-        </div>
-        <div class="param-group">
-          <label for="frequency-penalty-input">重复惩罚 (Frequency Penalty)</label>
-          <input
-            type="number"
-            id="frequency-penalty-input"
-            value="0.0"
-            step="0.1"
-            min="-2"
-            max="2"
-          />
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label for="api-base-url-input">API 接口地址 (Endpoint)</label>
-        <input
-          type="text"
-          id="api-base-url-input"
-          value=""
-          placeholder="例如: http://127.0.0.1:5002"
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>NanoGPT Lab</title>
+        <link
+            rel="stylesheet"
+            href="{{ url_for('static', filename='style.css') }}"
         />
-      </div>
+    </head>
+    <body>
+        <div class="container">
+            <h1>NanoGPT Lab</h1>
+            <textarea
+                id="prompt-input"
+                placeholder="在这里输入你的提示词..."
+            ></textarea>
 
-      <div class="form-group">
-        <label for="api-key-input">API Key</label>
-        <input
-          type="password"
-          id="api-key-input"
-          value="a_default_key_for_testing"
-          placeholder="请输入你的 API Key"
-        />
-      </div>
+            <div class="form-group">
+                <label for="model-select">选择模型</label>
+                <select id="model-select">
+                    <option value="">请提供有效的 API 地址和 Key</option>
+                </select>
+            </div>
 
-      <div class="form-group">
-        <label>
-          <input type="checkbox" id="stream-checkbox" checked />
-          启用流式生成 (Stream)
-        </label>
-      </div>
+            <div class="param-grid">
+                <div class="param-group">
+                    <label for="max-tokens-input">最大长度 (Max Tokens)</label>
+                    <input type="number" id="max-tokens-input" value="150" />
+                </div>
+                <div class="param-group">
+                    <label for="temperature-input">随机度 (Temperature)</label>
+                    <input
+                        type="number"
+                        id="temperature-input"
+                        value="0.7"
+                        step="0.1"
+                    />
+                </div>
+                <div class="param-group">
+                    <label for="top-k-input">词汇限制 (Top-K)</label>
+                    <input type="number" id="top-k-input" value="50" />
+                </div>
+                <div class="param-group">
+                    <label for="top-p-input">核采样 (Top-P)</label>
+                    <input
+                        type="number"
+                        id="top-p-input"
+                        value="0.9"
+                        step="0.1"
+                        min="0"
+                        max="1"
+                    />
+                </div>
+                <div class="param-group">
+                    <label for="presence-penalty-input"
+                        >话题惩罚 (Presence Penalty)</label
+                    >
+                    <input
+                        type="number"
+                        id="presence-penalty-input"
+                        value="0.0"
+                        step="0.1"
+                        min="-2"
+                        max="2"
+                    />
+                </div>
+                <div class="param-group">
+                    <label for="frequency-penalty-input"
+                        >重复惩罚 (Frequency Penalty)</label
+                    >
+                    <input
+                        type="number"
+                        id="frequency-penalty-input"
+                        value="0.0"
+                        step="0.1"
+                        min="-2"
+                        max="2"
+                    />
+                </div>
+            </div>
 
-      <button id="generate-button">
-        <span id="button-text">生成文本</span>
-      </button>
-      <div class="result-box" id="result">生成的文本将显示在这里。</div>
-    </div>
+            <div class="form-group">
+                <label for="api-base-url-input">API 接口地址 (Endpoint)</label>
+                <input
+                    type="text"
+                    id="api-base-url-input"
+                    value=""
+                    placeholder="例如: http://127.0.0.1:5002"
+                />
+            </div>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
-  </body>
+            <div class="form-group">
+                <label for="api-key-input">API Key</label>
+                <input
+                    type="password"
+                    id="api-key-input"
+                    value="a_default_key_for_testing"
+                    placeholder="请输入你的 API Key"
+                />
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="stream-checkbox" checked />
+                    启用流式生成 (Stream)
+                </label>
+            </div>
+
+            <button id="generate-button">
+                <span id="button-text">生成文本</span>
+            </button>
+            <div class="result-box" id="result">生成的文本将显示在这里。</div>
+        </div>
+
+        <script src="{{ url_for('static', filename='script.js') }}"></script>
+    </body>
 </html>
