@@ -5,9 +5,11 @@ import logging
 import time
 import uuid
 import json
+import platform
+import psutil
+import torch
 from functools import wraps
 
-import torch
 import tiktoken
 from flask import Flask, request, jsonify, render_template, Response
 # from flask_cors import CORS  # 使用手动CORS处理
@@ -17,6 +19,54 @@ from model.train_gpt2 import GPT, GPTConfig
 # --- 应用初始化 ---
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.logger.setLevel(logging.INFO)
+
+# --- 全局变量用于存储系统信息 ---
+SYSTEM_INFO = {}
+
+def collect_system_info():
+    """收集服务器硬件和系统信息"""
+    info = {}
+    # CPU 信息
+    info['cpu_count'] = psutil.cpu_count(logical=True)
+    info['cpu_percent'] = psutil.cpu_percent(interval=0.1)
+    try:
+        info['cpu_freq'] = psutil.cpu_freq().current if psutil.cpu_freq() else 'N/A'
+    except Exception as e:
+        app.logger.warning(f"无法获取 CPU 频率信息: {e}")
+        info['cpu_freq'] = 'N/A'
+    
+    # 内存信息
+    mem = psutil.virtual_memory()
+    info['total_memory_gb'] = round(mem.total / (1024**3), 2)
+    info['available_memory_gb'] = round(mem.available / (1024**3), 2)
+    
+    # GPU 信息 (如果可用)
+    if torch.cuda.is_available():
+        info['gpu_count'] = torch.cuda.device_count()
+        info['gpu_name'] = torch.cuda.get_device_name(0)
+        info['gpu_memory_total_gb'] = round(torch.cuda.get_device_properties(0).total_memory / (1024**3), 2)
+        info['gpu_memory_allocated_gb'] = round(torch.cuda.memory_allocated(0) / (1024**3), 2)
+        info['gpu_memory_cached_gb'] = round(torch.cuda.memory_reserved(0) / (1024**3), 2)
+    else:
+        info['gpu_count'] = 0
+        info['gpu_name'] = 'N/A'
+    
+    # 操作系统信息
+    info['os_system'] = platform.system()
+    info['os_release'] = platform.release()
+    info['os_version'] = platform.version()
+    info['python_version'] = platform.python_version()
+    
+    app.logger.info(f"收集到的系统信息: {info}")
+    return info
+
+# 在应用启动时收集系统信息
+SYSTEM_INFO = collect_system_info()
+
+@app.route('/v1/system_info', methods=['GET'])
+def get_system_info():
+    """返回服务器硬件和系统信息"""
+    return jsonify(SYSTEM_INFO)
 
 # --- CORS处理 ---
 @app.before_request
@@ -210,31 +260,9 @@ def chat_completions():
                 
                 # 用于收集流式生成的tokens
                 stream_tokens = []
+                start_time = time.time()
                 
-                def stream_callback(token_id, step):
-                    """流式生成回调函数"""
-                    stream_tokens.append(token_id)
-                    # 解码当前token
-                    try:
-                        token_text = assets['tokenizer'].decode([token_id])
-                        # 发送增量内容
-                        chunk_data = {
-                            "id": f"chatcmpl-{uuid.uuid4()}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": model_name,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": token_text},
-                                "finish_reason": None
-                            }]
-                        }
-                        return f"data: {json.dumps(chunk_data)}\n\n"
-                    except:
-                        # 如果单个token无法解码，跳过
-                        return ""
-                
-                # 开始流式生成
+                # 发送开始chunk
                 start_chunk = {
                     "id": f"chatcmpl-{uuid.uuid4()}",
                     "object": "chat.completion.chunk",
@@ -244,7 +272,14 @@ def chat_completions():
                         "index": 0,
                         "delta": {"role": "assistant", "content": ""},
                         "finish_reason": None
-                    }]
+                    }],
+                    "usage": {
+                        "prompt_tokens": len(tokens[0]),
+                        "completion_tokens": 0,
+                        "total_tokens": len(tokens[0]),
+                        "elapsed_time": 0.0,
+                        "tokens_per_second": 0.0
+                    }
                 }
                 yield f"data: {json.dumps(start_chunk)}\n\n"
                 
@@ -271,19 +306,32 @@ def chat_completions():
                             new_token_id = new_token[0]
                             stream_tokens.append(new_token_id)
                             
+                            # 计算性能指标
+                            current_time = time.time()
+                            elapsed_time = current_time - start_time
+                            completion_tokens_count = len(stream_tokens)
+                            tokens_per_second = completion_tokens_count / elapsed_time if elapsed_time > 0 else 0
+
                             # 尝试解码新token
                             try:
                                 token_text = assets['tokenizer'].decode([new_token_id])
                                 chunk_data = {
                                     "id": f"chatcmpl-{uuid.uuid4()}",
                                     "object": "chat.completion.chunk",
-                                    "created": int(time.time()),
+                                    "created": int(current_time),
                                     "model": model_name,
                                     "choices": [{
                                         "index": 0,
                                         "delta": {"content": token_text},
                                         "finish_reason": None
-                                    }]
+                                    }],
+                                    "usage": {
+                                        "prompt_tokens": len(tokens[0]),
+                                        "completion_tokens": completion_tokens_count,
+                                        "total_tokens": len(tokens[0]) + completion_tokens_count,
+                                        "elapsed_time": round(elapsed_time, 4),
+                                        "tokens_per_second": round(tokens_per_second, 2)
+                                    }
                                 }
                                 yield f"data: {json.dumps(chunk_data)}\n\n"
                             except:
@@ -294,16 +342,23 @@ def chat_completions():
                                         chunk_data = {
                                             "id": f"chatcmpl-{uuid.uuid4()}",
                                             "object": "chat.completion.chunk",
-                                            "created": int(time.time()),
+                                            "created": int(current_time),
                                             "model": model_name,
                                             "choices": [{
                                                 "index": 0,
                                                 "delta": {"content": accumulated_text},
                                                 "finish_reason": None
-                                            }]
+                                            }],
+                                            "usage": {
+                                                "prompt_tokens": len(tokens[0]),
+                                                "completion_tokens": completion_tokens_count,
+                                                "total_tokens": len(tokens[0]) + completion_tokens_count,
+                                                "elapsed_time": round(elapsed_time, 4),
+                                                "tokens_per_second": round(tokens_per_second, 2)
+                                            }
                                         }
                                         yield f"data: {json.dumps(chunk_data)}\n\n"
-                                        stream_tokens = []  # 清空已发送的tokens
+                                        # stream_tokens = []  # 清空已发送的tokens
                                     except:
                                         pass
                         
@@ -328,7 +383,9 @@ def chat_completions():
                     "usage": {
                         "prompt_tokens": len(tokens[0]),
                         "completion_tokens": len(stream_tokens),
-                        "total_tokens": len(tokens[0]) + len(stream_tokens)
+                        "total_tokens": len(tokens[0]) + len(stream_tokens),
+                        "elapsed_time": round(time.time() - start_time, 4),
+                        "tokens_per_second": round(len(stream_tokens) / (time.time() - start_time) if (time.time() - start_time) > 0 else 0, 2)
                     }
                 }
                 yield f"data: {json.dumps(final_chunk)}\n\n"
@@ -347,6 +404,7 @@ def chat_completions():
             )
         else:
             # 非流式生成（原有逻辑）
+            start_time = time.time()
             with torch.no_grad():
                 generated_tokens = assets['model'].generate(
                     tokens, 
@@ -357,6 +415,8 @@ def chat_completions():
                     presence_penalty=presence_penalty,
                     frequency_penalty=frequency_penalty
                 )
+            end_time = time.time()
+            
             # 只解码新生成的token，不包括输入的prompt
             new_tokens = generated_tokens[0][len(tokens[0]):]
             generated_text = assets['tokenizer'].decode(new_tokens.tolist())
@@ -368,6 +428,10 @@ def chat_completions():
             if not generated_text:
                 generated_text = "抱歉，我无法生成有意义的回复。请尝试不同的提示词。"
             
+            elapsed_time = end_time - start_time
+            completion_tokens_count = len(new_tokens)
+            tokens_per_second = completion_tokens_count / elapsed_time if elapsed_time > 0 else 0
+
             response = {
                 "id": f"chatcmpl-{uuid.uuid4()}",
                 "object": "chat.completion",
@@ -383,8 +447,10 @@ def chat_completions():
                 }],
                 "usage": {
                     "prompt_tokens": len(tokens[0]),
-                    "completion_tokens": len(new_tokens),
-                    "total_tokens": len(tokens[0]) + len(new_tokens)
+                    "completion_tokens": completion_tokens_count,
+                    "total_tokens": len(tokens[0]) + completion_tokens_count,
+                    "elapsed_time": round(elapsed_time, 4),
+                    "tokens_per_second": round(tokens_per_second, 2)
                 }
             }
             
@@ -413,4 +479,4 @@ def hello():
 # --- 应用启动 ---
 if __name__ == '__main__':
     print("以开发模式启动 OpenAI 兼容的 Flask 服务器...")
-    app.run(host='0.0.0.0', port=5002, debug=False)
+    app.run(host='0.0.0.0', port=5002, debug=True)

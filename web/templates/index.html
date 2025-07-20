@@ -112,6 +112,38 @@
                 <span id="button-text">生成文本</span>
             </button>
             <div class="result-box" id="result">生成的文本将显示在这里。</div>
+
+            <div class="performance-metrics">
+                <h2>性能指标</h2>
+                <div class="metric-group">
+                    <label>生成时间:</label>
+                    <span id="generation-time">0.00 s</span>
+                </div>
+                <div class="metric-group">
+                    <label>生成速度:</label>
+                    <span id="tokens-per-second">0.00 tokens/s</span>
+                </div>
+            </div>
+
+            <div class="system-info">
+                <h2>服务器硬件信息</h2>
+                <div class="info-group">
+                    <label>操作系统:</label>
+                    <span id="os-info">加载中...</span>
+                </div>
+                <div class="info-group">
+                    <label>CPU 核心数:</label>
+                    <span id="cpu-cores">加载中...</span>
+                </div>
+                <div class="info-group">
+                    <label>总内存:</label>
+                    <span id="total-memory">加载中...</span>
+                </div>
+                <div class="info-group">
+                    <label>GPU 信息:</label>
+                    <span id="gpu-info">加载中...</span>
+                </div>
+            </div>
         </div>
 
         <script src="{{ url_for('static', filename='script.js') }}"></script>

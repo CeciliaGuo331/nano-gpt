@@ -5,6 +5,7 @@ class ModelInterface {
     this.bindEvents();
     this.initializeApiUrl();
     this.loadModels();
+    this.loadSystemInfo(); // 加载系统信息
   }
 
   initializeElements() {
@@ -24,15 +25,27 @@ class ModelInterface {
     this.apiBaseUrlInput = document.getElementById("api-base-url-input");
     this.streamCheckbox = document.getElementById("stream-checkbox");
     
+    // 性能指标元素
+    this.generationTimeSpan = document.getElementById("generation-time");
+    this.tokensPerSecondSpan = document.getElementById("tokens-per-second");
+
+    // 系统信息元素
+    this.osInfoSpan = document.getElementById("os-info");
+    this.cpuCoresSpan = document.getElementById("cpu-cores");
+    this.totalMemorySpan = document.getElementById("total-memory");
+    this.gpuInfoSpan = document.getElementById("gpu-info");
+    
     // 用于流式生成的状态
     this.isGenerating = false;
     this.eventSource = null;
+    this.generationStartTime = 0;
+    this.generationTimer = null;
   }
 
   bindEvents() {
-    // API 地址或 Key 变更时重新加载模型
-    this.apiKeyInput.addEventListener("change", () => this.loadModels());
-    this.apiBaseUrlInput.addEventListener("change", () => this.loadModels());
+    // API 地址或 Key 变更时重新加载模型和系统信息
+    this.apiKeyInput.addEventListener("change", () => { this.loadModels(); this.loadSystemInfo(); });
+    this.apiBaseUrlInput.addEventListener("change", () => { this.loadModels(); this.loadSystemInfo(); });
     
     // 生成按钮点击事件
     this.generateButton.addEventListener("click", () => this.generateText());
@@ -119,6 +132,43 @@ class ModelInterface {
     }
   }
 
+  async loadSystemInfo() {
+    const baseUrl = this.getApiBaseUrl();
+    if (!baseUrl) {
+      this.osInfoSpan.textContent = "N/A";
+      this.cpuCoresSpan.textContent = "N/A";
+      this.totalMemorySpan.textContent = "N/A";
+      this.gpuInfoSpan.textContent = "N/A";
+      return;
+    }
+
+    try {
+      const systemInfoUrl = `${baseUrl}/v1/system_info`;
+      console.log(`正在从 ${systemInfoUrl} 加载系统信息...`);
+      const response = await fetch(systemInfoUrl);
+      const data = await response.json();
+
+      if (response.ok) {
+        this.osInfoSpan.textContent = `${data.os_system} ${data.os_release} (${data.os_version})`;
+        this.cpuCoresSpan.textContent = `${data.cpu_count} 核 (${data.cpu_freq} MHz)`;
+        this.totalMemorySpan.textContent = `${data.total_memory_gb} GB`;
+        if (data.gpu_count > 0) {
+          this.gpuInfoSpan.textContent = `${data.gpu_name} (${data.gpu_memory_total_gb} GB)`;
+        } else {
+          this.gpuInfoSpan.textContent = "无 GPU";
+        }
+      } else {
+        throw new Error(data.message || "无法加载系统信息");
+      }
+    } catch (error) {
+      console.error("加载系统信息时出错:", error);
+      this.osInfoSpan.textContent = "加载失败";
+      this.cpuCoresSpan.textContent = "加载失败";
+      this.totalMemorySpan.textContent = "加载失败";
+      this.gpuInfoSpan.textContent = "加载失败";
+    }
+  }
+
   async generateText() {
     const promptText = this.promptInput.value;
     const maxTokens = parseInt(this.maxTokensInput.value, 10) || 150;
@@ -155,6 +205,14 @@ class ModelInterface {
     // 设置加载状态
     this.setLoadingState(true);
     this.clearResult();
+    this.resetPerformanceMetrics();
+
+    // 启动计时器
+    this.generationStartTime = performance.now();
+    this.generationTimer = setInterval(() => {
+      const elapsed = (performance.now() - this.generationStartTime) / 1000;
+      this.generationTimeSpan.textContent = `${elapsed.toFixed(2)} s`;
+    }, 100);
 
     const requestBody = {
       model: modelName,
@@ -202,6 +260,11 @@ class ModelInterface {
       const generatedText = data.choices[0]?.message?.content;
       if (generatedText) {
         this.showResult(generatedText);
+        // 更新性能指标
+        if (data.usage) {
+          this.generationTimeSpan.textContent = `${data.usage.elapsed_time.toFixed(2)} s`;
+          this.tokensPerSecondSpan.textContent = `${data.usage.tokens_per_second.toFixed(2)} tokens/s`;
+        }
       } else {
         throw new Error("API 返回的数据格式不正确，未找到生成的文本。");
       }
@@ -210,6 +273,7 @@ class ModelInterface {
       this.showError("发生错误: " + error.message);
     } finally {
       this.setLoadingState(false);
+      this.stopTimer();
     }
   }
 
@@ -245,6 +309,7 @@ class ModelInterface {
                 if (done) {
                   console.log("流式生成完成");
                   this.setLoadingState(false);
+                  this.stopTimer();
                   return;
                 }
 
@@ -266,6 +331,7 @@ class ModelInterface {
                 console.error("流读取错误:", error);
                 this.showError("流式生成错误: " + error.message);
                 this.setLoadingState(false);
+                this.stopTimer();
               });
           };
 
@@ -275,11 +341,13 @@ class ModelInterface {
           console.error("流式请求错误:", error);
           this.showError("发生错误: " + error.message);
           this.setLoadingState(false);
+          this.stopTimer();
         });
     } catch (error) {
       console.error("流式生成初始化错误:", error);
       this.showError("发生错误: " + error.message);
       this.setLoadingState(false);
+      this.stopTimer();
     }
   }
 
@@ -300,6 +368,11 @@ class ModelInterface {
             this.appendResult(delta.content);
           }
         }
+        // 更新性能指标 (如果 chunk 中包含 usage 信息)
+        if (chunk.usage) {
+          this.generationTimeSpan.textContent = `${chunk.usage.elapsed_time.toFixed(2)} s`;
+          this.tokensPerSecondSpan.textContent = `${chunk.usage.tokens_per_second.toFixed(2)} tokens/s`;
+        }
       } catch (error) {
         console.error("解析流数据错误:", error, "原始数据:", line);
       }
@@ -313,6 +386,14 @@ class ModelInterface {
       this.eventSource = null;
     }
     this.setLoadingState(false);
+    this.stopTimer();
+  }
+
+  stopTimer() {
+    if (this.generationTimer) {
+      clearInterval(this.generationTimer);
+      this.generationTimer = null;
+    }
   }
 
   setLoadingState(loading) {
@@ -326,6 +407,11 @@ class ModelInterface {
   clearResult() {
     this.resultDiv.textContent = "";
     this.resultDiv.classList.remove("error");
+  }
+
+  resetPerformanceMetrics() {
+    this.generationTimeSpan.textContent = "0.00 s";
+    this.tokensPerSecondSpan.textContent = "0.00 tokens/s";
   }
 
   showResult(text) {

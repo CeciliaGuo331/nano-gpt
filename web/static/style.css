@@ -285,3 +285,68 @@ button:disabled {
   color: #d9534f;
   border-color: #d9534f;
 }
+
+/* 性能指标和系统信息样式 */
+.performance-metrics,
+.system-info {
+  background: var(--container-bg-color);
+  padding: 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  margin-top: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.performance-metrics h2,
+.system-info h2 {
+  font-size: 1.2rem;
+  color: var(--primary-color);
+  margin-top: 0;
+  margin-bottom: 1rem;
+  border-bottom: 2px solid var(--primary-color);
+  padding-bottom: 0.5rem;
+}
+
+.metric-group,
+.info-group {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0;
+  border-bottom: 1px dashed #e9ecef;
+}
+
+.metric-group:last-child,
+.info-group:last-child {
+  border-bottom: none;
+}
+
+.metric-group label,
+.info-group label {
+  font-weight: 500;
+  color: var(--text-color);
+  flex-basis: 40%; /* 调整标签宽度 */
+}
+
+.metric-group span,
+.info-group span {
+  color: #6c757d;
+  text-align: right;
+  flex-basis: 60%; /* 调整值宽度 */
+}
+
+@media (max-width: 480px) {
+  .metric-group,
+  .info-group {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .metric-group label,
+  .info-group label {
+    margin-bottom: 0.2rem;
+  }
+  .metric-group span,
+  .info-group span {
+    text-align: left;
+  }
+}
