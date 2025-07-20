@@ -8,6 +8,7 @@ import json
 import platform
 import psutil
 import torch
+import subprocess # 导入 subprocess 模块
 from functools import wraps
 
 import tiktoken
@@ -29,11 +30,44 @@ def collect_system_info():
     # CPU 信息
     info['cpu_count'] = psutil.cpu_count(logical=True)
     info['cpu_percent'] = psutil.cpu_percent(interval=0.1)
+    
+    # 尝试通过 sysctl 获取 CPU 频率
+    cpu_freq_str = 'N/A'
     try:
-        info['cpu_freq'] = psutil.cpu_freq().current if psutil.cpu_freq() else 'N/A'
+        # 检查是否是 Apple Silicon 芯片
+        result_brand = subprocess.run(['sysctl', '-n', 'machdep.cpu.brand_string'], capture_output=True, text=True, timeout=2)
+        brand_string = result_brand.stdout.strip()
+        
+        if "Apple" in brand_string:
+            # 对于 Apple Silicon，显示标称频率
+            cpu_freq_str = "3.2 GHz (Nominal)" # M1 Pro 的性能核心标称频率
+        else:
+            # 1. 优先尝试 hw.cpufrequency (返回 Hz)
+            result = subprocess.run(['sysctl', '-n', 'hw.cpufrequency'], capture_output=True, text=True, timeout=2)
+            if result.returncode == 0 and result.stdout.strip():
+                try:
+                    freq_hz = int(result.stdout.strip())
+                    cpu_freq_str = f"{freq_hz / 1000000:.0f} MHz"
+                except ValueError:
+                    app.logger.warning(f"无法将 hw.cpufrequency 输出转换为整数: '{result.stdout.strip()}'")
+            
+            # 2. 如果 cpu_freq_str 仍然是 'N/A'，尝试解析 machdep.cpu.brand_string (针对 Intel)
+            if cpu_freq_str == 'N/A':
+                import re
+                match = re.search(r'@\s*([0-9.]+)(GHz|MHz)', brand_string, re.IGNORECASE)
+                if match:
+                    value = float(match.group(1))
+                    unit = match.group(2).upper()
+                    if unit == 'GHZ':
+                        cpu_freq_str = f"{value * 1000:.0f} MHz" # 转换为 MHz
+                    else:
+                        cpu_freq_str = f"{value:.0f} MHz"
+
     except Exception as e:
-        app.logger.warning(f"无法获取 CPU 频率信息: {e}")
-        info['cpu_freq'] = 'N/A'
+        app.logger.warning(f"无法通过 sysctl 获取 CPU 频率信息: {e}")
+        cpu_freq_str = 'N/A'
+    
+    info['cpu_freq'] = cpu_freq_str
     
     # 内存信息
     mem = psutil.virtual_memory()
