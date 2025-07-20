@@ -4,6 +4,8 @@
 
 本项目基于 [build-nanogpt](https://github.com/karpathy/build-nanogpt) 提供的 PyTorch GPT-2 模型原型实现，通过预训练建立语言基础，并使用 dolly-15k 指令数据集进行监督微调，构建了具备指令遵循能力的对话助理。项目实现了完整的 OpenAI 兼容 API 接口，支持流式生成、高级采样参数，提供了功能丰富的 Web 前端界面，并可与 LobeChat 等主流 AI 应用无缝集成。
 
+## 项目文件结构
+
 ## 模型架构
 
 ### 架构概述
@@ -67,26 +69,68 @@ x = x + mlp_out                      # 残差连接
 
 这种精心设计的架构在保持计算效率的同时，为模型提供了强大的序列建模和特征学习能力。
 
-## 训练流程
+## 模型训练
 
-### 阶段一：基础预训练 (Pre-training)
+### 训练阶段
 
-### 阶段二：指令微调 (Instruction Fine-tuning)
+1. 预训练 (Pre-training)
 
-## 性能评估
+数据集：edu_fineweb10B
+
+2. 指令微调 (Instruction Fine-tuning)
+
+数据集：dolly-15k、自定义数据集
+
+特殊标记清理和指令遵循格式
+
+### 训练实现
+
+1. 断点续训
+
+2. 分布式训练
+
+### 性能评估
+
+Hellaswag 评估
 
 ## 部署与应用
+
+Flask 框架的前端网页
+
+OpenAI 兼容的 api 接口，支持主流 AI 应用，如 LobeChat
 
 ## 快速开始
 
 ### 1. 环境设置
 
+Python 3.12.7
+
+pip install -r requirements.txt
+
 ### 2. 数据准备
+
+1. fineweb 数据集
+
+python -m data_prep.fineweb
+
+2. dolly 数据集
+
+python -m data_prep.prepare_dolly
+
+3. 自编数据集
+
+python -m data_prep.prepare_custom_dataset
 
 ### 3. 模型训练与微调
 
+参数说明
+
+命令示例
+
 ### 4. 启动 Web 应用
 
-## 项目文件结构
+1. flask 开发服务器
+
+2. 生产环境启动
 
 ## 展望

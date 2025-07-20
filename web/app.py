@@ -413,4 +413,4 @@ def hello():
 # --- 应用启动 ---
 if __name__ == '__main__':
     print("以开发模式启动 OpenAI 兼容的 Flask 服务器...")
-    app.run(host='0.0.0.0', port=5002, debug=True)
+    app.run(host='0.0.0.0', port=5002, debug=False)
