@@ -9,8 +9,7 @@ git_chore.sh
 
 docs/*.txt
 
-REPORT.md
-
 .VSCodeCounter/
+.obsidian/
 
 *.npy

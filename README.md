@@ -1,136 +1,111 @@
-# NanoGPT: 从随机权重到指令遵循
+# NanoGPT: 从预训练到指令微调的完整实践
 
-## 项目简介
+本项目是一个基于 PyTorch 的 GPT-2 实现，旨在提供一个从数据准备、模型预训练、指令微调到最终部署的完整、端到端的开源解决方案。通过本项目，您可以深入了解一个小型语言模型（SLM）是如何从随机权重开始，一步步学习通用知识，并最终被塑造成一个能听懂人类指令的对话助理的。
 
-本项目基于 [build-nanogpt](https://github.com/karpathy/build-nanogpt) 提供的 PyTorch GPT-2 模型原型实现，通过预训练建立语言基础，并使用 dolly-15k 指令数据集进行监督微调，构建了具备指令遵循能力的对话助理。项目实现了完整的 OpenAI 兼容 API 接口，支持流式生成、高级采样参数，提供了功能丰富的 Web 前端界面，并可与 LobeChat 等主流 AI 应用无缝集成。
+我们最终提供了一个与 OpenAI API 完全兼容的服务接口，可以无缝集成到 LobeChat 等现代 AI 应用中。
 
-## 项目文件结构
+## ✨ 主要功能
 
-## 模型架构
+-   **完整的端到端流程**: 涵盖从数据处理到生产部署的每一个环节，代码清晰易懂。
+-   **强大的训练能力**: 内置断点续训和分布式训练 (DDP) 支持，能够进行稳定、高效的大规模训练。
+-   **有效的指令微调**: 验证了在 GPT-2 这样的经典架构上进行指令微调的有效性，并提供了完整的实现。
+-   **OpenAI 兼容 API**: 提供高性能、支持流式生成的 API 接口，可作为任何 OpenAI 兼容客户端的后端服务。
+-   **Web 交互界面**: 自带一个简洁的 Web UI，方便快速进行模型效果的演示和测试。
 
-### 架构概述
-
-GPT-2 采用了仅解码器（decoder-only）的 Transformer 架构，其核心由 12 个相同的 Transformer 块 (`Block`) 堆叠而成。每个`Block`包含两个关键组件：
-
-1. 多头因果自注意力层 (Multi-Head Causal Self-Attention)
-2. 前馈神经网络层 (Feed-Forward Network, or MLP)
-
-`Block`模块采用了预归一化 (Pre-Normalization / Pre-LN) 结构，在每个子模块前进行层归一化 (LayerNorm)，并通过残差连接 (Residual Connection) 将子模块输出与其输入相加。相比后归一化结构，Pre-LN 提供更稳定的梯度流动，显著改善训练收敛性。
-
-### 数据流处理
-
-每个 Transformer 块的前向传播遵循以下流程：
-
-```python
-# 第一个子层：自注意力
-x_norm1 = ln_1(x)                    # 层归一化
-attn_out = self_attention(x_norm1)   # 多头自注意力
-x = x + attn_out                     # 残差连接
-
-# 第二个子层：前馈网络
-x_norm2 = ln_2(x)                    # 层归一化
-mlp_out = mlp(x_norm2)               # 前馈网络
-x = x + mlp_out                      # 残差连接
-```
-
-### 模块实现和优化方法
-
-1. 因果自注意力模块（CausalSelfAttention）
-
-这个模块实现了多头因果自注意力机制。
-
--   高效的 QKV 计算： 用单一的线性层 `c_attn` 将输入 `x` 从维度 `n_embd` 投影到 `3 * n_embd`，并将结果张量沿最后一个维度分割成 Q, K, V 三部分，避免多次矩阵运算。
-
--   多头并行处理：在得到 Q, K, V 后，通过 `view()` 和 `transpose()` 操作将嵌入维度 `C` 拆分为 `n_head` 个头，每个头的维度为 `hs = C / n_head`。这使得模型能从多个表示子空间并行学习特征。
-
--   因果掩码与 Flash Attention：
-
-    -   核心计算使用 `F.scaled_dot_product_attention(is_causal=True)`
-
-    -   `is_causal=True` 自动应用上三角掩码，确保每个位置只能访问当前及之前的 token，满足自回归生成要求
-
-    -   底层调用 Flash Attention 算法，实现内存高效的线性复杂度注意力计算
-
--   输出投影：在所有头的输出被重新拼接回 `(B, T, C)` 的形状后，通过一个最终的线性层 `c_proj` 进行投影，得到该模块的最终输出。
-
-2. 前馈神经网络模块（MLP）
-
-这是一个标准的前馈神经网络模块，也称为 Position-wise Feed-Forward Network。
-
--   维度变换：采用经典的"扩展-收缩"架构
-
-    -   `c_fc：n_embd → 4×n_embd`（维度扩展）
-
-    -   `c_proj：4×n_embd → n_embd`（维度收缩）
-
--   激活函数：使用 GELU（Gaussian Error Linear Unit）替代传统 ReLU，其平滑特性和随机正则化效应提升训练稳定性和模型性能。
-
--   特征学习：扩展的中间维度为模型提供更大的参数空间，增强复杂特征变换的学习能力。
-
-这种精心设计的架构在保持计算效率的同时，为模型提供了强大的序列建模和特征学习能力。
-
-## 模型训练
-
-### 训练阶段
-
-1. 预训练 (Pre-training)
-
-数据集：edu_fineweb10B
-
-2. 指令微调 (Instruction Fine-tuning)
-
-数据集：dolly-15k、自定义数据集
-
-特殊标记清理和指令遵循格式
-
-### 训练实现
-
-1. 断点续训
-
-2. 分布式训练
-
-### 性能评估
-
-Hellaswag 评估
-
-## 部署与应用
-
-Flask 框架的前端网页
-
-OpenAI 兼容的 api 接口，支持主流 AI 应用，如 LobeChat
-
-## 快速开始
+## 🚀 快速开始
 
 ### 1. 环境设置
 
-Python 3.12.7
+确保您已安装 Python 3.10+。然后，克隆仓库并安装所需的依赖项：
 
+```bash
+# 克隆项目仓库
+git clone https://github.com/your-username/nano-gpt.git
+cd nano-gpt
+
+# 安装依赖
 pip install -r requirements.txt
+```
 
 ### 2. 数据准备
 
-1. fineweb 数据集
+本项目包含预训练和微调两个阶段，需要准备相应的数据集。
 
-python -m data_prep.fineweb
-
-2. dolly 数据集
-
-python -m data_prep.prepare_dolly
-
-3. 自编数据集
-
-python -m data_prep.prepare_custom_dataset
+-   **预训练数据 (FineWeb-Edu)**: 下载并处理 FineWeb-Edu 数据集用于模型预训练。
+    ```bash
+    python -m data_prep.fineweb
+    ```
+-   **指令微调数据 (Dolly-15k)**: 下载并处理 Dolly-15k 数据集用于指令微调。
+    ```bash
+    python -m data_prep.prepare_dolly
+    ```
 
 ### 3. 模型训练与微调
 
-参数说明
-
-命令示例
+-   **第一步：预训练**: 在准备好的 FineWeb 数据上进行预训练，建立模型的基础语言能力。
+    ```bash
+    # 运行预训练脚本
+    python -m model.train_gpt2
+    ```
+-   **第二步：指令微调**: 使用预训练好的模型权重，在 Dolly-15k 数据集上进行微调，使其学会遵循指令。
+    ```bash
+    # 运行微调脚本，它会自动加载最新的预训练检查点
+    python -m model.finetune_dolly
+    ```
 
 ### 4. 启动 Web 应用
 
-1. flask 开发服务器
+训练完成后，您可以启动后端服务，它将提供 API 接口和 Web UI。
 
-2. 生产环境启动
+```bash
+# 使用 gunicorn 在生产模式下启动
+gunicorn --config gunicorn_config.py web.app:app
+```
 
-## 展望
+服务启动后，您可以：
+-   在浏览器中打开 `http://127.0.0.1:5001` 访问 Web 界面。
+-   将 `http://127.0.0.1:5001/v1` 作为 API 端点配置到 LobeChat 或其他 OpenAI 客户端中。
+
+## ⚙️ API 使用示例
+
+您可以使用 `curl` 或任何 HTTP 客户端与模型的 API 进行交互。请确保将 `YOUR_API_KEY` 替换为您在环境中设置的密钥。
+
+```bash
+curl http://127.0.0.1:5001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -d '{
+    "model": "model_00599.pt",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Explain quantum computing in simple terms."
+      }
+    ],
+    "stream": false
+  }'
+```
+
+## 📂 项目文件结构
+
+```
+/
+├── data_prep/         # 数据准备脚本 (FineWeb, Dolly, 自定义)
+├── model/             # 模型核心与训练脚本 (预训练, 微调)
+├── eval/              # 评估脚本 (Hellaswag)
+├── web/               # Web 应用 (Flask后端, API实现, 前端模板)
+├── log/               # 预训练模型检查点和日志
+├── logs_finetune/     # 微调模型检查点和日志
+├── gunicorn_config.py # Gunicorn 生产服务器配置
+├── requirements.txt   # Python 依赖项
+└── README.md          # 本文档
+```
+
+## 🤝 如何贡献
+
+我们欢迎任何形式的贡献！如果您有任何想法、建议或发现了 Bug，请随时提交 Pull Request 或创建 Issue。
+
+## 📄 许可证
+
+本项目采用 MIT 许可证。详情请见 `LICENSE` 文件。
+
