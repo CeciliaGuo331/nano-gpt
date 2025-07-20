@@ -23,18 +23,6 @@ errorlog = '-'
 loglevel = 'info'
 
 # --- 服务器钩子 ---
-# 当使用 gevent 时，模型加载逻辑保持不变。
-def post_fork(server, worker):
-    """
-    Gunicorn hook, 在一个 worker 进程被 fork 之后调用。
-    """
-    server.log.info(f"Worker {worker.pid} forking, attempting to load model.")
-    
-    from web.app import app, load_model
-    
-    with app.app_context():
-        load_model(app)
-    
-    server.log.info(f"Worker {worker.pid} has successfully loaded the model.")
+# 模型加载现在是按需进行的，每个 worker 独立加载和缓存模型。
 
 print(f"Gunicorn config loaded. Worker Class: {worker_class}, Workers: {workers}")
