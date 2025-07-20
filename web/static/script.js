@@ -14,6 +14,7 @@ class ModelInterface {
     this.buttonText = document.getElementById("button-text");
     this.promptInput = document.getElementById("prompt-input");
     this.resultDiv = document.getElementById("result");
+    this.generatedTextContent = document.getElementById("generated-text-content");
     this.maxTokensInput = document.getElementById("max-tokens-input");
     this.temperatureInput = document.getElementById("temperature-input");
     this.topKInput = document.getElementById("top-k-input");
@@ -405,7 +406,7 @@ class ModelInterface {
   }
 
   clearResult() {
-    this.resultDiv.textContent = "";
+    this.generatedTextContent.textContent = "";
     this.resultDiv.classList.remove("error");
   }
 
@@ -415,21 +416,21 @@ class ModelInterface {
   }
 
   showResult(text) {
-    this.resultDiv.textContent = text;
+    this.generatedTextContent.textContent = text;
     this.resultDiv.classList.remove("error");
   }
 
   appendResult(text) {
     // 流式生成时追加内容
-    if (!this.resultDiv.textContent) {
-      this.resultDiv.textContent = text;
+    if (!this.generatedTextContent.textContent) {
+      this.generatedTextContent.textContent = text;
     } else {
-      this.resultDiv.textContent += text;
+      this.generatedTextContent.textContent += text;
     }
     this.resultDiv.classList.remove("error");
     
     // 自动滚动到底部
-    this.resultDiv.scrollTop = this.resultDiv.scrollHeight;
+    this.generatedTextContent.scrollTop = this.generatedTextContent.scrollHeight;
   }
 
   showError(message) {

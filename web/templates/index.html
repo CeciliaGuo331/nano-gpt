@@ -111,17 +111,19 @@
             <button id="generate-button">
                 <span id="button-text">生成文本</span>
             </button>
-            <div class="result-box" id="result">生成的文本将显示在这里。</div>
-
-            <div class="performance-metrics">
-                <h2>性能指标</h2>
-                <div class="metric-group">
-                    <label>生成时间:</label>
-                    <span id="generation-time">0.00 s</span>
-                </div>
-                <div class="metric-group">
-                    <label>生成速度:</label>
-                    <span id="tokens-per-second">0.00 tokens/s</span>
+            <div class="result-box" id="result">
+                <div id="generated-text-content">生成的文本将显示在这里。</div>
+                <div class="performance-metrics">
+                    <div class="metrics-inline-container">
+                        <div class="metric-group">
+                            <label>生成时间:</label>
+                            <span id="generation-time">0.00 s</span>
+                        </div>
+                        <div class="metric-group">
+                            <label>生成速度:</label>
+                            <span id="tokens-per-second">0.00 tokens/s</span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
