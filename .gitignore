@@ -13,3 +13,5 @@ docs/*.txt
 .obsidian/
 
 *.npy
+
+nohup.out

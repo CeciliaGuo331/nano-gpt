@@ -151,7 +151,7 @@ class ModelInterface {
 
       if (response.ok) {
         this.osInfoSpan.textContent = `${data.os_system} ${data.os_release} (${data.os_version})`;
-        this.cpuCoresSpan.textContent = `${data.cpu_count} 核 (${data.cpu_freq} MHz)`;
+        this.cpuCoresSpan.textContent = `${data.cpu_count} 核 (${data.cpu_freq})`;
         this.totalMemorySpan.textContent = `${data.total_memory_gb} GB`;
         if (data.gpu_count > 0) {
           this.gpuInfoSpan.textContent = `${data.gpu_name} (${data.gpu_memory_total_gb} GB)`;
