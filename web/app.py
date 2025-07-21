@@ -124,7 +124,7 @@ def after_request(response):
 
 # --- 模型缓存和目录配置 ---
 MODEL_CACHE = {}
-MODELS_DIR = ["./logs_finetune", "./log", "./log_backup"]
+MODELS_DIR = ["./logs_finetune", "./log"]
 
 # --- API Key 认证 ---
 VALID_API_KEY = os.environ.get("MY_API_KEY", "a_default_key_for_testing")
@@ -159,12 +159,15 @@ def find_model_full_path(model_name):
     return None
 
 def get_model(model_name):
-    if model_name in MODEL_CACHE: 
-        app.logger.info(f"从缓存加载模型 '{model_name}'")
-        return MODEL_CACHE[model_name]
+    # 移除模型名称中的备注，以便找到实际文件
+    original_model_name = model_name.replace(" (预训练)", "").replace(" (微调)", "")
     
-    app.logger.info(f"从磁盘加载模型 '{model_name}'...")
-    checkpoint_path = find_model_full_path(model_name)
+    if original_model_name in MODEL_CACHE: 
+        app.logger.info(f"从缓存加载模型 '{original_model_name}'")
+        return MODEL_CACHE[original_model_name]
+    
+    app.logger.info(f"从磁盘加载模型 '{original_model_name}'...")
+    checkpoint_path = find_model_full_path(original_model_name)
     if not checkpoint_path: 
         raise FileNotFoundError(f"在配置的目录中未找到模型文件: {model_name}")
     
@@ -222,16 +225,24 @@ def list_models():
     """
     try:
         app.logger.info(f"模型列表请求来自: {request.remote_addr}")
-        model_basenames = set()
+        model_info = {} # 使用字典来存储模型信息，键为模型名称，值为带备注的名称
         for directory in MODELS_DIR:
             if not os.path.isdir(directory): 
                 app.logger.warning(f"模型目录 '{directory}' 未找到，将被跳过。")
                 continue
             search_pattern = os.path.join(directory, '**', '*.pt')
             for path in glob.glob(search_pattern, recursive=True):
-                model_basenames.add(os.path.basename(path))
+                model_basename = os.path.basename(path)
+                if directory == "./log":
+                    display_name = f"{model_basename} (预训练)"
+                elif directory == "./logs_finetune":
+                    display_name = f"{model_basename} (微调)"
+                else:
+                    display_name = model_basename # 默认情况，不添加备注
+                model_info[model_basename] = display_name # 存储原始名称和显示名称的映射
         
-        model_list = [{"id": name, "object": "model", "owned_by": "user", "permission": []} for name in sorted(list(model_basenames))]
+        # 构建模型列表，使用带备注的名称作为id
+        model_list = [{"id": display_name, "object": "model", "owned_by": "user", "permission": []} for original_name, display_name in sorted(model_info.items())]
         app.logger.info(f"返回模型列表: {len(model_list)} 个模型给 {request.remote_addr}")
         return jsonify({"object": "list", "data": model_list})
     except Exception as e:
