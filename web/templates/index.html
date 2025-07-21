@@ -17,6 +17,41 @@
                 placeholder="在这里输入你的提示词..."
             ></textarea>
 
+            <details class="instruction-box">
+                <summary>使用说明</summary>
+                <div class="instruction-content">
+                    <p>1. 提示词只能使用英文。</p>
+                    <p>2. 问题的格式，清晰的格式有助于模型理解。</p>
+                    <p>3. 各参数详细介绍：</p>
+                    <ul>
+                        <li>
+                            <strong>最大长度 (Max Tokens):</strong>
+                            控制生成文本的最大长度。
+                        </li>
+                        <li>
+                            <strong>随机度 (Temperature):</strong>
+                            控制生成文本的随机性。值越高，文本越随机；值越低，文本越确定。
+                        </li>
+                        <li>
+                            <strong>词汇限制 (Top-K):</strong>
+                            限制模型在生成每个词时考虑的词汇数量。
+                        </li>
+                        <li>
+                            <strong>核采样 (Top-P):</strong>
+                            动态选择概率累积和达到指定值的最小词汇集。
+                        </li>
+                        <li>
+                            <strong>话题惩罚 (Presence Penalty):</strong>
+                            惩罚模型生成新话题，鼓励模型保持在当前话题。
+                        </li>
+                        <li>
+                            <strong>重复惩罚 (Frequency Penalty):</strong>
+                            惩罚模型重复生成相同的词汇。
+                        </li>
+                    </ul>
+                </div>
+            </details>
+
             <div class="form-group">
                 <label for="model-select">选择模型</label>
                 <select id="model-select">
