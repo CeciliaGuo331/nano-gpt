@@ -153,7 +153,16 @@ def get_model(model_name):
         raise FileNotFoundError(f"在配置的目录中未找到模型文件: {model_name}")
     
     app.logger.info(f"找到模型路径: {checkpoint_path}")
-    device = 'cpu'
+
+    # 自动检测设备
+    if torch.cuda.is_available():
+        device = 'cuda'
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+    else:
+        device = 'cpu'
+    app.logger.info(f"自动选择的设备: {device}")
+    
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint['config']
     model = GPT(config)
