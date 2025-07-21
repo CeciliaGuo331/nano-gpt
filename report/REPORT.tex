@@ -1,0 +1,758 @@
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[a4paper]{article}
+\usepackage{xeCJK}
+\usepackage{amsmath, amssymb, geometry, comment}
+\geometry{margin=2.5cm}
+\linespread{1.3}
+\setCJKmainfont{STSong}
+\setlength{\parindent}{2em}
+\usepackage{xcolor}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\newenvironment{Shaded}{}{}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.49,0.56,0.16}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\BuiltInTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{#1}}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.53,0.00,0.00}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.56,0.13,0.00}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.73,0.13,0.13}{\textit{#1}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{1.00,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.25,0.63,0.44}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.02,0.16,0.49}{#1}}
+\newcommand{\ImportTok}[1]{\textcolor[rgb]{0.00,0.50,0.00}{\textbf{#1}}}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.40,0.40,0.40}{#1}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.00,0.44,0.13}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.74,0.48,0.00}{#1}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.73,0.40,0.53}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.10,0.09,0.49}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.25,0.44,0.63}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.38,0.63,0.69}{\textbf{\textit{#1}}}}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\author{}
+\date{}
+
+\begin{document}
+
+\section{NanoGPT：从随机权重到指令遵循}\label{nanogptux4eceux968fux673aux6743ux91cdux5230ux6307ux4ee4ux9075ux5faa}
+
+\subsection{摘要}\label{ux6458ux8981}
+
+本项目基于 Andrej Karpathy 的
+\href{https://github.com/karpathy/build-nanogpt}{build-nanogpt}
+项目，实现了一个完整的、从零开始的 GPT-2
+模型训练与部署流程。项目首先在大型文本语料库 \texttt{FineWeb-Edu}
+上对模型进行预训练，使其掌握通用的语言知识；随后，利用
+\texttt{dolly-15k}
+指令数据集进行监督式微调，赋予模型遵循人类指令的能力。为了提升工程实用性，项目实现了断点续训、分布式训练
+(DDP) 等关键功能。项目通过一个与 OpenAI API 完全兼容的高性能 Flask
+应用提供服务，该应用支持流式生成、高级采样参数，并配备了简洁的 Web
+交互界面。
+
+\subsection{1. 引言}\label{ux5f15ux8a00}
+
+\subsubsection{1.1
+当前小型语言模型(SLM)领域情况}\label{ux5f53ux524dux5c0fux578bux8bedux8a00ux6a21ux578bslmux9886ux57dfux60c5ux51b5}
+
+小型语言模型（Small Language Models,
+SLM）指参数量在几十亿甚至更少的语言模型。它们不是简单地将大模型等比例缩小，而是通过更优的模型架构、更高质量的训练数据和先进的训练技术，力求在小巧的体积内实现尽可能高的性能。
+
+当前 SLM 领域呈现出百花齐放的态势，性能已经远超当年的
+GPT-2，甚至在很多特定任务上可以媲美 GPT-3.5 级别的模型。前沿模型包括微软
+Phi 系列、谷歌 Gemma \& PaliGemma 系列、阿里巴巴 Qwen (千问) 系列等。SLM
+的应用主要包括端侧部署和专用化与垂直领域应用等，其小巧的规模为微调和部署提供了便利。
+
+在大型语言模型日益发展的当下，模型蒸馏与人类反馈对齐技术也成为训练高性能
+SLM 的重要方法。
+
+\subsubsection{1.2
+模型架构选择}\label{ux6a21ux578bux67b6ux6784ux9009ux62e9}
+
+本项目期望通过回归经典模型以理解语言模型的基础工作原理，并完成端到端的全流程训练和部署实践。GPT-2
+采用标准的 Decoder-only Transformer 架构，包含了现代大语言模型 (如
+GPT-3，LLaMA，Qwen) 的核心元素------多头因果自注意力 (Multi-Head Causal
+Self-Attention) 和前馈神经网络 (Feed-Forward Network)。
+
+本项目选用其 124M
+的小型版本。该规模便于在有限的计算资源下，进行完整的预训练和微调。
+
+\subsubsection{1.3
+本项目的主要工作}\label{ux672cux9879ux76eeux7684ux4e3bux8981ux5de5ux4f5c}
+
+本项目的主要贡献可以归结为以下四个方面：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{实现了端到端的完整开源流程}：提供了一套完整的从数据准备、模型预训练、指令微调到最终部署的开源解决方案，具有可复现性。
+\item
+  \textbf{强化了工程化的训练能力}：显著增强了项目的工程实用性，实现了断点续训等关键功能，确保了在真实硬件环境下进行大规模、长时间训练的稳定性和效率。
+\item
+  \textbf{验证了指令微调的有效性}：成功在经典的 GPT-2
+  架构上应用了指令微调技术，并证明了该方法能有效引导模型遵循人类指令，显著提升了其在特定任务上的表现。
+\item
+  \textbf{提供了高性能的兼容 API}：我们开发并提供了一个与 OpenAI
+  标准完全兼容的 API
+  接口，支持流式生成等高级功能，确保了模型可以轻松集成到现有生态系统和应用中。
+\end{enumerate}
+
+\subsection{2.
+系统设计与模型架构}\label{ux7cfbux7edfux8bbeux8ba1ux4e0eux6a21ux578bux67b6ux6784}
+
+本项目的核心是一个基于 GPT-2 架构的语言模型，其实现严格遵循了原始论文和
+\texttt{train\_gpt2.py} 中定义的核心组件。
+
+\subsubsection{\texorpdfstring{2.1 核心模型
+\texttt{GPT}}{2.1 核心模型 GPT}}\label{ux6838ux5fc3ux6a21ux578b-gpt}
+
+模型的主体是 \texttt{GPT} 类，它整合了嵌入层、多个 Transformer
+解码器块和最终的语言模型头。
+
+\paragraph{2.1.1 模型结构}\label{ux6a21ux578bux7ed3ux6784}
+
+\texttt{GPT} 类的整体结构定义在 \texttt{nn.ModuleDict}
+中，包含了四个关键部分：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{\texttt{wte} (Word Token Embedding)}: 词嵌入层，将输入的 token
+  索引映射为 \texttt{n\_embd} 维度的向量。
+\item
+  \textbf{\texttt{wpe} (Word Position Embedding)}:
+  位置嵌入层，为序列中的每个位置生成一个 \texttt{n\_embd}
+  维度的向量，以提供位置信息。
+\item
+  \textbf{\texttt{h} (Transformer Blocks)}: 包含 \texttt{n\_layer} 个
+  \texttt{Block} 模块的 \texttt{nn.ModuleList}，是模型的核心部分。
+\item
+  \textbf{\texttt{ln\_f} (Final LayerNorm)}:
+  在输出到语言模型头之前应用的最终层归一化。
+\end{enumerate}
+
+最终，通过一个线性层 \texttt{lm\_head} (语言模型头) ，将 Transformer
+的输出映射到整个词汇表 (\texttt{vocab\_size}) 的 logits 分布上。
+
+\paragraph{2.1.2
+前向传播流程}\label{ux524dux5411ux4f20ux64adux6d41ux7a0b}
+
+模型的前向传播 (\texttt{forward} 方法) 流程如下：
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \textbf{输入处理}: 接收形状为 \texttt{(B,\ T)} 的 token 索引
+  \texttt{idx}。
+\item
+  \textbf{嵌入计算}:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    通过 \texttt{wte} 获得 token 嵌入 \texttt{tok\_emb}。
+  \item
+    通过 \texttt{wpe} 获得位置嵌入 \texttt{pos\_emb}。
+  \item
+    将两者相加得到融合了内容和位置信息的输入表示 \texttt{x}。
+  \end{itemize}
+\item
+  \textbf{Transformer 堆叠处理}: 输入 \texttt{x} 依次通过
+  \texttt{n\_layer} 个 \texttt{Block} 进行深度特征提取。
+\item
+  \textbf{最终输出}:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    通过最终的 \texttt{ln\_f} 进行归一化。
+  \item
+    通过 \texttt{lm\_head} 计算得到 \texttt{(B,\ T,\ vocab\_size)}
+    形状的 logits。
+  \item
+    如果提供了 \texttt{targets}，则计算并返回交叉熵损失。
+  \end{itemize}
+\end{enumerate}
+
+\paragraph{2.1.3
+权重初始化与共享}\label{ux6743ux91cdux521dux59cbux5316ux4e0eux5171ux4eab}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{权重共享}: 为了节约参数并遵循 GPT-2 的设计，\texttt{lm\_head}
+  的权重与 \texttt{wte} 的词嵌入权重是共享的。
+\item
+  \textbf{权重初始化}: \texttt{\_init\_weights}
+  方法对模型参数进行初始化。线性层权重采用均值为 0、标准差为 0.02
+  的正态分布初始化，而嵌入层也采用类似的正态分布。特别地，对于残差连接路径上的投影层
+  (\texttt{c\_proj})，其权重标准差会根据 \texttt{n\_layer} 进行缩放
+  (\texttt{std\ *=\ (2\ *\ self.config.n\_layer)\ **\ -0.5})，这是维持训练稳定性的关键技巧，可以防止残差累积过程中的数值爆炸。
+\end{itemize}
+
+\subsubsection{\texorpdfstring{2.2 Transformer 核心模块
+\texttt{Block}}{2.2 Transformer 核心模块 Block}}\label{transformer-ux6838ux5fc3ux6a21ux5757-block}
+
+\texttt{Block} 是构成 GPT 模型的基本单元，其结构采用了 \textbf{Pre-LN
+(预归一化)} 形式，这种结构将 LayerNorm 置于子模块（自注意力和
+MLP）之前，有助于稳定训练过程中的梯度。
+
+每个 \texttt{Block} 的数据流如下：
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\CommentTok{\# 第一个子层：多头因果自注意力}
+\NormalTok{x }\OperatorTok{=}\NormalTok{ x }\OperatorTok{+} \VariableTok{self}\NormalTok{.attn(}\VariableTok{self}\NormalTok{.ln\_1(x))}
+
+\CommentTok{\# 第二个子层：前馈神经网络}
+\NormalTok{x }\OperatorTok{=}\NormalTok{ x }\OperatorTok{+} \VariableTok{self}\NormalTok{.mlp(}\VariableTok{self}\NormalTok{.ln\_2(x))}
+\end{Highlighting}
+\end{Shaded}
+
+残差连接使得信息和梯度能够更顺畅地在深层网络中流动。
+
+\subsubsection{2.3 关键子模块}\label{ux5173ux952eux5b50ux6a21ux5757}
+
+\paragraph{\texorpdfstring{2.3.1 \texttt{CausalSelfAttention}
+(因果自注意力)}{2.3.1 CausalSelfAttention (因果自注意力)}}\label{causalselfattention-ux56e0ux679cux81eaux6ce8ux610fux529b}
+
+此模块是实现序列信息交互的核心。
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{QKV 统一计算}: 使用单个线性层 \texttt{c\_attn} 将输入
+  \texttt{x} 从 \texttt{n\_embd} 维投影到 \texttt{3\ *\ n\_embd}
+  维，然后一次性分割出 Q (Query), K (Key), V (Value)
+  三个张量，提高了计算效率。
+\item
+  \textbf{多头机制}: 将 Q, K, V 的嵌入维度 \texttt{C} 分割成
+  \texttt{n\_head} 个头，每个头的维度为
+  \texttt{hs\ =\ C\ /\ n\_head}。这使得模型能从多个不同的表示子空间并行学习信息。
+\item
+  \textbf{Flash Attention}: 核心的注意力计算直接调用
+  \texttt{F.scaled\_dot\_product\_attention(is\_causal=True)}。\texttt{is\_causal=True}
+  参数会自动应用因果掩码，确保每个 token
+  只能关注其自身及之前的位置，这是语言模型生成文本的必要条件。底层实现利用了
+  Flash
+  Attention，这是一种内存高效且计算速度更快的注意力算法，避免了显式构造
+  \texttt{(T,\ T)} 注意力矩阵带来的内存瓶颈。
+\item
+  \textbf{输出投影}: 多头注意力的输出被重新组合，并通过一个最终的线性层
+  \texttt{c\_proj} 投影回 \texttt{n\_embd} 维度。
+\end{itemize}
+
+\paragraph{\texorpdfstring{2.3.2 \texttt{MLP}
+(前馈神经网络)}{2.3.2 MLP (前馈神经网络)}}\label{mlp-ux524dux9988ux795eux7ecfux7f51ux7edc}
+
+这是模型中另一个关键的非线性处理单元。
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{扩展-收缩结构}: 采用两层全连接网络。第一层 \texttt{c\_fc}
+  将维度从 \texttt{n\_embd} 扩展到 \texttt{4\ *\ n\_embd}，第二层
+  \texttt{c\_proj} 再将其收缩回
+  \texttt{n\_embd}。这种结构为模型提供了强大的特征变换能力。
+\item
+  \textbf{GELU 激活函数}: 中间使用 \texttt{GELU} (Gaussian Error Linear
+  Unit) 激活函数，其平滑的非线性特性相比 ReLU
+  更有利于模型的训练和性能。代码中使用了 \texttt{approximate="tanh"} 的
+  GELU 近似版本，以获得更好的计算性能。
+\end{itemize}
+
+\subsubsection{\texorpdfstring{2.4 优化器配置
+\texttt{configure\_optimizers}}{2.4 优化器配置 configure\_optimizers}}\label{ux4f18ux5316ux5668ux914dux7f6e-configure_optimizers}
+
+\texttt{configure\_optimizers} 方法展示了精细的优化策略：
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{参数分组}: 将模型参数分为两组：
+
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \tightlist
+  \item
+    \textbf{需要权重衰减 (Weight Decay) 的参数}: 所有维度大于等于 2
+    的张量（主要是矩阵乘法中的权重 \texttt{weight} 和嵌入层
+    \texttt{nn.Embedding}）。
+  \item
+    \textbf{无需权重衰减的参数}: 维度小于 2 的张量（如偏置 \texttt{bias}
+    和层归一化 \texttt{LayerNorm} 的参数）。
+    这种做法可以防止对偏置和归一化参数施加不必要的惩罚，是现代深度学习训练中的标准实践。
+  \end{enumerate}
+\item
+  \textbf{AdamW 优化器}: 使用 AdamW
+  优化器，它将权重衰减与梯度更新解耦，通常能带来比标准 Adam 更好的性能。
+\item
+  \textbf{Fused AdamW}: 在 CUDA 环境下，代码会自动检测并使用
+  \texttt{fused} 版本的 AdamW，该版本将多个计算核心操作融合，能显著提升
+  GPU 上的训练速度。
+\end{itemize}
+
+\subsection{3.
+数据集与数据处理}\label{ux6570ux636eux96c6ux4e0eux6570ux636eux5904ux7406}
+
+高质量的数据是成功训练语言模型的基础。本项目涉及三种不同类型的数据集，每种都通过专门的脚本进行处理。
+
+\subsubsection{3.1 预训练数据:
+FineWeb-Edu}\label{ux9884ux8badux7ec3ux6570ux636e-fineweb-edu}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{来源}:
+  \href{https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu}{HuggingFaceFW/fineweb-edu}，一个经过高质量过滤和去重的教育内容网络文本数据集。
+\item
+  \textbf{处理脚本}: \texttt{data\_prep/fineweb.py}
+\item
+  \textbf{处理流程}:
+
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \tightlist
+  \item
+    \textbf{下载}: 使用 \texttt{datasets} 库下载 \texttt{sample-10BT}
+    配置的数据集。
+  \item
+    \textbf{Tokenization}: 使用 \texttt{tiktoken} 的 \texttt{gpt2}
+    编码器进行并行化 tokenization。每个文档前都添加
+    \texttt{\textless{}\textbar{}endoftext\textbar{}\textgreater{}}
+    (EOT) 特殊 token 作为分隔符。
+  \item
+    \textbf{分片 (Sharding)}: 将 tokenized 数据流切分为大小为 1 亿 token
+    的分片 (\texttt{.npy}
+    文件)，以便在训练时高效加载。第一个分片被指定为验证集
+    (\texttt{val})，其余为训练集
+    (\texttt{train})。这种策略确保了训练和验证数据来自同一分布，但又严格分离。
+  \end{enumerate}
+\end{itemize}
+
+\subsubsection{3.2 指令微调数据:
+Dolly-15k}\label{ux6307ux4ee4ux5faeux8c03ux6570ux636e-dolly-15k}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{来源}:
+  \href{https://huggingface.co/datasets/databricks/databricks-dolly-15k}{databricks/databricks-dolly-15k}，一个由
+  Databricks 员工编写的高质量人工指令数据集。
+\item
+  \textbf{处理脚本}: \texttt{data\_prep/prepare\_dolly.py}
+\item
+  \textbf{处理流程}:
+
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \tightlist
+  \item
+    \textbf{格式化}: 每个样本统一格式化为包含
+    \texttt{\#\#\#\ Instruction:}，\texttt{\#\#\#\ Context:} (如有) 和
+    \texttt{\#\#\#\ Response:}
+    的结构化字符串。这种清晰的结构有助于模型学习指令遵循的模式。
+  \item
+    \textbf{Tokenization}: 与预训练数据类似，使用 \texttt{gpt2}
+    编码器处理格式化后的字符串，并在每个样本的末尾添加 EOT token。
+  \item
+    \textbf{切分与保存}: 在 tokenization 之前，整个数据集按比例（默认为
+    10\%）随机切分为训练集和验证集。然后，每个子集被独立地 tokenized
+    并保存为分片文件。
+  \end{enumerate}
+\end{itemize}
+
+\subsubsection{3.3
+自定义数据扩展}\label{ux81eaux5b9aux4e49ux6570ux636eux6269ux5c55}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{来源}: 用户提供的 \texttt{.jsonl} 文件，每行包含
+  \texttt{instruction}, \texttt{context} (可选), \texttt{response}
+  字段。
+\item
+  \textbf{处理脚本}: \texttt{data\_prep/prepare\_custom\_dataset.py}
+\item
+  \textbf{处理流程}:
+  该脚本提供了一个通用框架，用于处理任何符合特定格式的自定义指令数据集。它执行与
+  \texttt{prepare\_dolly.py}
+  类似的步骤：读取、随机打乱、按比例切分、格式化、tokenization
+  并保存。这极大地增强了项目的可扩展性，允许用户使用自己的数据对模型进行特定领域的微调。
+\end{itemize}
+
+\subsection{4.
+模型训练与微调}\label{ux6a21ux578bux8badux7ec3ux4e0eux5faeux8c03}
+
+本项目的训练分为两个核心阶段：预训练和指令微调。两个阶段共享了许多工程实践，但在数据加载和损失计算方面存在关键差异。
+
+\subsubsection{4.1 预训练阶段}\label{ux9884ux8badux7ec3ux9636ux6bb5}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{脚本}: \texttt{model/train\_gpt2.py}
+\item
+  \textbf{目标}:
+  在大规模无标签文本上训练模型，使其学习通用的语言规律、语法和世界知识。
+\item
+  \textbf{数据加载}: \texttt{DataLoaderLite}
+  在此阶段将数据视为一个连续的 token
+  流。它按顺序读取数据分片，并从中切分出大小为 \texttt{(B,\ T)}
+  的批次，其中 \texttt{B} 是批次大小，\texttt{T}
+  是上下文长度。这种方法对于语言建模任务是最高效的。
+\item
+  \textbf{训练循环}:
+
+  \begin{enumerate}
+  \def\labelenumi{\arabic{enumi}.}
+  \tightlist
+  \item
+    \textbf{学习率调度}: 采用带预热 (warm-up) 的余弦退火衰减策略
+    (\texttt{get\_lr}
+    函数)，在训练初期线性增加学习率，然后在剩余的训练步骤中余弦退火平滑衰减。
+  \item
+    \textbf{梯度累积}: 为了在有限的显存下模拟大批次训练，脚本通过
+    \texttt{grad\_accum\_steps} 参数累积多个 micro-batch
+    的梯度，然后执行一次优化器步骤。
+  \item
+    \textbf{损失计算}: 对整个上下文窗口内的所有 token
+    计算交叉熵损失，促使模型学习预测序列中的下一个词。
+  \end{enumerate}
+\end{itemize}
+
+\subsubsection{4.2
+指令微调阶段}\label{ux6307ux4ee4ux5faeux8c03ux9636ux6bb5}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{脚本}: \texttt{model/finetune\_dolly.py}
+\item
+  \textbf{目标}:
+  在小规模有标签的指令数据上进行微调，教会模型理解并遵循指令，生成有用的回答。
+\item
+  \textbf{数据加载}: 重新设计\texttt{DataLoaderLite}
+  以处理独立的指令样本。首先将 token 流按 EOT
+  分割成单独的样本，然后在每个批次中随机选择 \texttt{B}
+  个样本，并将其填充 (padding) 到该批次中最长样本的长度。
+\item
+  \textbf{损失遮罩 (Loss Masking)}:
+  这是指令微调的核心优化。为了让模型专注于学习生成回答，损失函数只在指令的
+  \texttt{\#\#\#\ Response:} 部分计算。输入给模型的 \texttt{targets}
+  张量中，非回答部分的 token 被设置为一个特殊的忽略值
+  (\texttt{-100})，这样 \texttt{F.cross\_entropy}
+  在计算损失时会自动忽略它们。这极大地提升了微调的效率和效果。
+\item
+  \textbf{检查点策略}: 微调脚本清晰地区分了两种检查点加载方式：
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{-\/-resume\ \textquotesingle{}auto\textquotesingle{}}:
+    从最新的微调检查点恢复完整的训练状态（包括优化器和学习率）。
+  \item
+    \texttt{-\/-pretrained\_checkpoint}:
+    仅加载预训练模型的权重，并从头开始微调。
+  \end{itemize}
+\end{itemize}
+
+\subsubsection{4.3
+关键技术实现}\label{ux5173ux952eux6280ux672fux5b9eux73b0}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{分布式数据并行 (DDP)}: 两个训练脚本都通过 \texttt{torchrun}
+  支持 DDP。在 DDP 模式下，每个 GPU
+  进程都拥有模型的完整副本，并处理一部分数据。在反向传播后，梯度会在所有进程间进行
+  all-reduce
+  同步，确保所有模型副本的权重更新保持一致。这使得训练能够水平扩展到多张
+  GPU，显著缩短训练时间。
+\item
+  \textbf{断点续训}: 通过精心设计的 \texttt{save\_checkpoint} 和
+  \texttt{load\_checkpoint}
+  函数，项目实现了稳健的断点续训能力。检查点不仅保存了模型权重，还保存了优化器状态、数据加载器位置以及所有相关的随机数生成器状态
+  (PyTorch, NumPy, Python
+  random)。这确保了从中断处恢复的训练与原始训练过程完全一致。
+\end{itemize}
+
+\subsection{5.
+实验与性能评估}\label{ux5b9eux9a8cux4e0eux6027ux80fdux8bc4ux4f30}
+
+\subsubsection{5.1 标准化评估:
+Hellaswag}\label{ux6807ux51c6ux5316ux8bc4ux4f30-hellaswag}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{评估工具}: \texttt{eval/hellaswag.py}
+\item
+  \textbf{评估任务}: Hellaswag
+  是一个常识推理任务，要求模型在给定上下文后，从四个选项中选择最合乎逻辑的句子结尾。
+\item
+  \textbf{评估方法}: 在预训练过程中，模型会定期在 Hellaswag
+  验证集上进行评估。评估方法是计算每个选项（上下文 +
+  结尾）的平均困惑度（通过交叉熵损失实现）。损失最低的选项被认为是模型的预测。
+\item
+  \textbf{结果}: 预训练日志显示，在训练结束时（约 19072 步），模型的
+  Hellaswag 准确率（\texttt{acc\_norm}）达到了约
+  \textbf{29.55\%}。这个结果与公开的、同等规模的 GPT-2
+  模型在该任务上的基线性能基本一致，验证了我们预训练的有效性。
+\end{itemize}
+
+\subsubsection{5.2 定性分析}\label{ux5b9aux6027ux5206ux6790}
+
+指令微调的成功与否，最终需要通过模型生成的具体例子来检验。\texttt{finetune\_dolly.py}
+中的 \texttt{generate\_samples}
+函数在训练过程中定期生成示例文本，让我们得以观察模型的进化。
+
+\textbf{微调前 (仅预训练)}: 当被问及 ``What is machine learning?''
+时，模型可能会生成类似以下不连贯或不相关的文本：
+
+\begin{verbatim}
+Machine learning is a type of AI that uses artificial intelligence to create machine-like models that can be used to identify and solve problems. It is a form of AI that uses machine learning to improve the performance of tasks that require human-like intelligence.
+How does machine learning work?
+Machine learning is a type of AI that uses artificial intelligence to make decisions based on data that is collected from a variety of sources. It is often used to improve human-like intelligence, which can be used to improve the performance of tasks that require human-like intelligence.
+Is machine learning a bad thing?
+Machine learning is a type of AI that is designed to improve the performance of tasks that require human-like intelligence. It is often used to...
+\end{verbatim}
+
+\textbf{微调后}: 在经过 Dolly-15k
+数据集的微调后，模型对相同问题的回答变得结构化且切题：
+
+\begin{verbatim}
+Machine learning is a branch of artificial intelligence which helps us to identify patterns in data that can help us improve our capabilities to make decisions based on data. This helps us make better decisions and make better decisions. It also helps us understand patterns in data that may lead to a problem or a problem that could be solved. Machine learning has been used in many industries such as healthcare, automotive, agriculture, manufacturing, and finance.
+What are the benefits of machine learning?
+The benefits of machine learning include:
+
+-   Data-driven decision making
+-   Data-driven decision making
+-   Predictive analytics
+-   Machine learning algorithms
+-   Machine learning algorithms
+-   Machine learning applications
+-   Data analytics
+-   Data-driven decision making
+-   Data
+\end{verbatim}
+
+这个对比鲜明地展示了指令微调的有效性。模型已经学会了遵循``指令-回应''的结构，能够提供一个切题的定义，并尝试列出相关的益处。这与微调前生成的、不知所云的文本形成了巨大反差。
+
+然而，这个样本也暴露了模型的局限性。在定义部分出现了``make better
+decisions and make better
+decisions''这样的直接重复，而在列举优点时，重复问题则更为严重，多个要点（如``Data-driven
+decision making''）被多次列出，且``Data''这样的单词条目意义不大。
+
+因此，我们可以得出结论：指令微调成功地引导了模型的基本行为，使其从生成无意义的文本转变为提供有结构、相关的回答。但要实现更高层次的语义连贯性和内容多样性，还需要更优质、更多样化的微调数据或更先进的训练技术。
+
+\subsubsection{5.3 API 性能}\label{api-ux6027ux80fd}
+
+项目通过以下方式优化 API 的性能：
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{Gevent Worker}: \texttt{gunicorn\_config.py} 中使用
+  \texttt{gevent} 作为 worker 类型。Gevent
+  基于协程，能以非阻塞方式高效处理大量并发的 I/O
+  密集型请求（如网络连接），这对于一个需要同时服务多个用户的 API
+  至关重要。
+\item
+  \textbf{模型缓存}: \texttt{web/app.py} 实现了一个简单的模型缓存
+  (\texttt{MODEL\_CACHE})。一旦模型被加载到内存中，后续对同一模型的请求将直接从缓存中获取，避免了昂贵的磁盘
+  I/O 和模型初始化开销。
+\item
+  \textbf{流式生成}: API 支持流式响应
+  (\texttt{stream=True})，允许客户端在第一个 token
+  生成后立即开始接收内容，极大地改善了用户感知的响应速度。值得注意的是，对流式生成的支持是与
+  LobeChat 等 AI 应用集成的重要条件。非流式 API
+  需要等待模型生成全部内容后才一次性返回结果，这个过程可能长达数十秒。对于
+  LobeChat
+  这样的实时应用来说，长时间的等待很容易触发网络超时而导致连接失败。相比之下，流式生成会像打字一样，将生成的内容逐字逐句地持续``推送''给客户端，不仅能立即看到响应，也保持了连接的持续活跃，从而完美规避了超时问题。
+\end{itemize}
+
+\subsection{6. 应用与部署}\label{ux5e94ux7528ux4e0eux90e8ux7f72}
+
+本项目的最终交付物是一个功能齐全、可部署的 Web 应用，它通过与 OpenAI
+兼容的 API 提供模型能力。
+
+\subsubsection{6.1 Web 应用接口}\label{web-ux5e94ux7528ux63a5ux53e3}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{前端}: \texttt{web/templates/index.html}
+  提供了一个基础的交互界面，用户可以在网页上直接与模型进行对话。
+\item
+  \textbf{后端}: \texttt{web/app.py} 是一个 Flask
+  应用，作为整个服务的核心。它负责处理 HTTP 请求，并调用推理逻辑。
+\end{itemize}
+
+\subsubsection{6.2 OpenAI 兼容 API}\label{openai-ux517cux5bb9-api}
+
+这是本项目的核心亮点之一，确保了与现有 AI 生态系统的无缝集成（如
+LobeChat、各种编程语言的 OpenAI 库等）。
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{端点实现}: \texttt{web/app.py} 精心实现了以下关键端点：
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{/v1/models}: 列出所有在 \texttt{MODELS\_DIR}
+    中找到的可用模型检查点。
+  \item
+    \texttt{/v1/chat/completions}: 核心的聊天端点。它接收与 OpenAI API
+    格式完全相同的 JSON 请求体。
+  \end{itemize}
+\item
+  \textbf{功能支持}:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \textbf{认证}: 通过 \texttt{require\_api\_key} 装饰器实现简单的
+    Bearer Token 认证。
+  \item
+    \textbf{参数兼容}: 支持 \texttt{model}, \texttt{messages},
+    \texttt{stream}, \texttt{temperature}, \texttt{top\_k},
+    \texttt{top\_p}, \texttt{presence\_penalty},
+    \texttt{frequency\_penalty} 等常用参数，并对数值范围进行了合理约束。
+  \item
+    \textbf{流式响应}: 当请求中 \texttt{stream=True} 时，端点返回一个
+    \texttt{text/event-stream} 响应，逐个 token 地推送生成的内容，并以
+    \texttt{data:\ {[}DONE{]}} 结束。
+  \end{itemize}
+\end{itemize}
+
+\subsubsection{6.3
+生产环境部署}\label{ux751fux4ea7ux73afux5883ux90e8ux7f72}
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{服务器}: 使用 Gunicorn 作为生产环境的 WSGI 服务器。
+\item
+  \textbf{配置}: \texttt{gunicorn\_config.py} 提供了生产环境的配置。
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \textbf{Worker 类型}: 明确指定
+    \texttt{worker\_class\ =\ \textquotesingle{}gevent\textquotesingle{}}，以利用其高效的并发处理能力。
+  \item
+    \textbf{模型加载}: 通过 \texttt{post\_fork} 服务器钩子，确保每个
+    Gunicorn worker
+    进程在启动时独立加载模型。这种模式避免了在主进程中加载模型然后 fork
+    导致的潜在问题，并确保了 worker 间的隔离。
+  \end{itemize}
+\end{itemize}
+
+\subsection{7. 结论与展望}\label{ux7ed3ux8bbaux4e0eux5c55ux671b}
+
+\subsubsection{7.1 结论}\label{ux7ed3ux8bba}
+
+本项目成功地完成了一次构建小型语言模型的端到端实践。从一个基础的 GPT-2
+Pytorch
+实现出发，项目通过严谨的工程实践，构建了一个包含数据处理、大规模预训练、指令微调、评估和生产级部署的完整流程，验证了即使是像
+GPT-2
+这样的经典架构，在经过高质量数据和指令微调的塑造后，也能展现出显著的行为改善，从生成无意义的重复文本转变为提供结构化、与指令相关的回答。
+
+然而，定性分析清晰地显示了仅通过基础监督式微调（SFT）所能达到的上限。模型虽然学会了遵循指令格式，但其生成内容的连贯性和多样性仍有不足，表现出明显的重复性。这说明，要实现更高质量的生成效果，单纯依赖现有数据集进行
+SFT 是不够的。
+
+尽管存在这些局限，本项目最终产出的 OpenAI 兼容
+API，使得这个小巧的模型能够轻松地融入现代 AI
+应用生态，是一次成功的实践。
+
+\subsubsection{7.2 展望}\label{ux5c55ux671b}
+
+基于本次实践的发现，未来的工作可以从以下几个方面展开，以克服当前模型的局限性：
+
+\begin{itemize}
+\tightlist
+\item
+  \textbf{提升数据质量与多样性}:
+  这是解决内容重复问题的关键。可以引入更多样化的指令数据集，或者对现有数据进行清洗和增强，剔除低质量、重复性高的样本，增加数据在风格、主题和复杂性上的变化。
+\item
+  \textbf{探索高级微调技术}:
+  监督式微调只是第一步。为了让模型更好地对齐人类偏好，减少不合逻辑或重复的输出，可以引入直接偏好优化
+  (DPO) 或人类反馈强化学习 (RLHF) 等更先进的对齐技术。
+\item
+  \textbf{模型架构升级}: 探索更现代的 SLM 架构，如 LLaMA 或 Mistral
+  的变体。它们通常包含 Grouped-Query Attention (GQA)、Sliding Window
+  Attention (SWA) 和 SwiGLU
+  等优化，这些结构上的改进本身就能在同等参数规模下提升模型的性能和生成质量。
+\item
+  \textbf{量化与性能优化}: 对训练好的模型进行量化（如 4-bit 或
+  8-bit），以减小模型体积和显存占用，并提升在 CPU
+  或端侧设备上的推理速度。
+\item
+  \textbf{更全面的评估}: 引入更多维度的评估基准，如 MMLU、TruthfulQA
+  等，以更全面地衡量模型的综合能力，并为未来的改进提供更精确的指导。
+\end{itemize}
+
+\end{document}

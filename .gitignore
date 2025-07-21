@@ -15,3 +15,7 @@ docs/*.txt
 *.npy
 
 nohup.out
+
+report/REPORT.aux
+report/REPORT.log
+report/REPORT.synctex.gz
