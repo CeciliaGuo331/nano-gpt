@@ -16,7 +16,5 @@ docs/*.txt
 
 nohup.out
 
-report/REPORT.aux
-report/REPORT.log
-report/REPORT.synctex.gz
+report/
 REPORT.log
